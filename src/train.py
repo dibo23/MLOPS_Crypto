@@ -1,34 +1,21 @@
 import sys
 from pathlib import Path
-from typing import Tuple
-
 import numpy as np
 import tensorflow as tf
 import yaml
-
 from utils.seed import set_seed
 
-
-def get_model(
-    image_shape: Tuple[int, int, int],
-    conv_size: int,
-    dense_size: int,
-    output_classes: int,
-) -> tf.keras.Model:
-    """Create a simple CNN model"""
+def get_model(input_shape: int, dense_size: int) -> tf.keras.Model:
+    """Create a simple MLP for numerical features"""
     model = tf.keras.models.Sequential(
         [
-            tf.keras.layers.Conv2D(
-                conv_size, (3, 3), activation="relu", input_shape=image_shape
-            ),
-            tf.keras.layers.MaxPooling2D((3, 3)),
-            tf.keras.layers.Flatten(),
+            tf.keras.layers.InputLayer(input_shape=(input_shape,)),
             tf.keras.layers.Dense(dense_size, activation="relu"),
-            tf.keras.layers.Dense(output_classes),
+            tf.keras.layers.Dense(dense_size // 2, activation="relu"),
+            tf.keras.layers.Dense(1),  # prédiction continue (close)
         ]
     )
     return model
-
 
 def main() -> None:
     if len(sys.argv) != 3:
@@ -37,55 +24,49 @@ def main() -> None:
         exit(1)
 
     # Load parameters
-    prepare_params = yaml.safe_load(open("params.yaml"))["prepare"]
     train_params = yaml.safe_load(open("params.yaml"))["train"]
-
     prepared_dataset_folder = Path(sys.argv[1])
     model_folder = Path(sys.argv[2])
 
-    image_size = prepare_params["image_size"]
-    grayscale = prepare_params["grayscale"]
-    image_shape = (*image_size, 1 if grayscale else 3)
-
-    seed = train_params["seed"]
-    lr = train_params["lr"]
-    epochs = train_params["epochs"]
-    conv_size = train_params["conv_size"]
-    dense_size = train_params["dense_size"]
-    output_classes = train_params["output_classes"]
+    seed = train_params.get("seed", 42)
+    lr = train_params.get("lr", 0.001)
+    epochs = train_params.get("epochs", 10)
+    dense_size = train_params.get("dense_size", 128)
 
     # Set seed for reproducibility
     set_seed(seed)
 
-    # Load data
+    # Load datasets
     ds_train = tf.data.Dataset.load(str(prepared_dataset_folder / "train"))
     ds_test = tf.data.Dataset.load(str(prepared_dataset_folder / "test"))
 
+    # Infer input dimension
+    for x_batch, y_batch in ds_train.take(1):
+        input_dim = x_batch.shape[1]
+
     # Define the model
-    model = get_model(image_shape, conv_size, dense_size, output_classes)
+    model = get_model(input_dim, dense_size)
     model.compile(
         optimizer=tf.keras.optimizers.Adam(lr),
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-        metrics=[tf.keras.metrics.SparseCategoricalAccuracy()],
+        loss=tf.keras.losses.MeanSquaredError(),
+        metrics=[tf.keras.metrics.MeanAbsoluteError()],
     )
     model.summary()
 
     # Train the model
-    model.fit(
+    history = model.fit(
         ds_train,
         epochs=epochs,
         validation_data=ds_test,
     )
 
-    # Save the model
+    # Save the model and history
     model_folder.mkdir(parents=True, exist_ok=True)
     model_path = model_folder / "model.keras"
     model.save(model_path)
-    # Save the model history
-    np.save(model_folder / "history.npy", model.history.history)
+    np.save(model_folder / "history.npy", history.history)
 
-    print(f"\nModel saved at {model_folder.absolute()}")
-
+    print(f"\n✅ Model saved at {model_folder.absolute()}")
 
 if __name__ == "__main__":
     main()

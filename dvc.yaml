@@ -1,6 +1,7 @@
 stages:
   prepare:
-    cmd: python3.12 src/prepare.py data/raw data/prepared
+    cmd: python3.12 src/prepare.py data/raw/btc_ohlcv_long_5min.csv 
+      data/prepared
     deps:
     - data/raw
     - src/prepare.py
@@ -27,6 +28,5 @@ stages:
     metrics:
     - evaluation/metrics.json
     plots:
-    - evaluation/plots/confusion_matrix.png
-    - evaluation/plots/pred_preview.png
+    - evaluation/plots/pred_vs_true.png
     - evaluation/plots/training_history.png
