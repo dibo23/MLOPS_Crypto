@@ -1,0 +1,4 @@
+tensorflow==2.19.0
+matplotlib==3.10.3
+pyyaml==6.0.2
+dvc==3.60.1
