@@ -5,9 +5,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 
+SAMPLE_SIZE = 5000  # Nombre maximum de points pour les graphiques
+
 
 def get_training_plot(model_history: dict) -> plt.Figure:
-    """Plot the training and validation loss and MAE"""
+    """Plot training & validation loss and MAE."""
     epochs = range(1, len(model_history["loss"]) + 1)
     fig, ax1 = plt.subplots(figsize=(10, 4))
     ax1.plot(epochs, model_history["loss"], label="Training loss")
@@ -29,23 +31,64 @@ def get_training_plot(model_history: dict) -> plt.Figure:
     return fig
 
 
-def get_pred_vs_true_plot(model: tf.keras.Model, ds_test: tf.data.Dataset) -> plt.Figure:
-    """Plot predictions vs true values"""
-    y_true = []
-    y_pred = []
+def get_pred_vs_true_plot(model: tf.keras.Model, ds_test: tf.data.Dataset, sample_size=SAMPLE_SIZE):
+    """Plot predictions vs true values."""
+    y_true, y_pred = [], []
     for x_batch, y_batch in ds_test:
+        if len(y_true) >= sample_size:
+            break
         y_true.append(y_batch.numpy())
         y_pred.append(model.predict(x_batch, verbose=0))
-    y_true = np.concatenate(y_true)
-    y_pred = np.concatenate(y_pred)
+    y_true = np.concatenate(y_true)[:sample_size].flatten()
+    y_pred = np.concatenate(y_pred)[:sample_size].flatten()
 
     fig = plt.figure(figsize=(12, 5))
-    plt.plot(y_true, label="True Close")
-    plt.plot(y_pred, label="Predicted Close")
+    plt.plot(y_true, label="True Close", linewidth=1)
+    plt.plot(y_pred, label="Predicted Close", linewidth=1)
     plt.xlabel("Time step")
     plt.ylabel("Close Price")
     plt.title("Predictions vs True Values")
     plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    return fig, y_true, y_pred
+
+
+def get_error_over_time_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figure:
+    """Plot absolute error over time."""
+    abs_error = np.abs(y_true - y_pred)
+    fig = plt.figure(figsize=(10, 4))
+    plt.plot(abs_error, color="purple", linewidth=1)
+    plt.title("Absolute Error Over Time")
+    plt.xlabel("Time step")
+    plt.ylabel("Absolute Error")
+    plt.grid(True)
+    plt.tight_layout()
+    return fig
+
+
+def get_error_distribution_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figure:
+    """Plot distribution (histogram) of prediction errors."""
+    errors = (y_true - y_pred).flatten()
+    fig = plt.figure(figsize=(8, 5))
+    plt.hist(errors, bins=50, color="teal", alpha=0.7)
+    plt.title("Error Distribution")
+    plt.xlabel("Prediction Error")
+    plt.ylabel("Frequency")
+    plt.grid(True)
+    plt.tight_layout()
+    return fig
+
+
+def get_correlation_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figure:
+    """Scatter plot of predicted vs true values with y=x line."""
+    fig = plt.figure(figsize=(6, 6))
+    plt.scatter(y_true, y_pred, s=5, alpha=0.5)
+    min_val, max_val = min(y_true.min(), y_pred.min()), max(y_true.max(), y_pred.max())
+    plt.plot([min_val, max_val], [min_val, max_val], color="red", linestyle="--")
+    plt.xlabel("True Close")
+    plt.ylabel("Predicted Close")
+    plt.title("Predicted vs True Values")
     plt.grid(True)
     plt.tight_layout()
     return fig
@@ -66,9 +109,8 @@ def main() -> None:
     # Load test dataset
     ds_test = tf.data.Dataset.load(str(prepared_dataset_folder / "test"))
 
-    # Load model and training history
-    model_path = model_folder / "model.keras"
-    model = tf.keras.models.load_model(model_path)
+    # Load model and history
+    model = tf.keras.models.load_model(model_folder / "model.keras")
     model_history = np.load(model_folder / "history.npy", allow_pickle=True).item()
 
     # Evaluate
@@ -80,13 +122,26 @@ def main() -> None:
     with open(evaluation_folder / "metrics.json", "w") as f:
         json.dump({"val_loss": float(loss), "val_mae": float(mae)}, f, indent=2)
 
-    # Plot training history
+    # === PLOTS ===
+    # 1. Training history
     fig = get_training_plot(model_history)
     fig.savefig(plots_folder / "training_history.png")
 
-    # Plot predictions vs true
-    fig = get_pred_vs_true_plot(model, ds_test)
+    # 2. Predictions vs True
+    fig, y_true, y_pred = get_pred_vs_true_plot(model, ds_test)
     fig.savefig(plots_folder / "pred_vs_true.png")
+
+    # 3. Error over time
+    fig = get_error_over_time_plot(y_true, y_pred)
+    fig.savefig(plots_folder / "error_over_time.png")
+
+    # 4. Error distribution
+    fig = get_error_distribution_plot(y_true, y_pred)
+    fig.savefig(plots_folder / "error_distribution.png")
+
+    # 5. Correlation plot
+    fig = get_correlation_plot(y_true, y_pred)
+    fig.savefig(plots_folder / "correlation.png")
 
     print(f"\n✅ Evaluation metrics and plots saved at {evaluation_folder.absolute()}")
 

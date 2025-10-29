@@ -73,17 +73,29 @@ stages:
       nfiles: 2
     - path: src/evaluate.py
       hash: md5
-      md5: 56be9be05d59137543cb334644f06a79
-      size: 3130
+      md5: 42bdf9ccaf94f55bbf9fb3a472070057
+      size: 5161
     outs:
     - path: evaluation/metrics.json
       hash: md5
       md5: bbd156d4ff0f0753b05743d2b7c9146d
       size: 59
+    - path: evaluation/plots/correlation.png
+      hash: md5
+      md5: 8b46dab8c44eda307df924b57c22e459
+      size: 28613
+    - path: evaluation/plots/error_distribution.png
+      hash: md5
+      md5: 3466bc814cf5f776ce13c627a00049c0
+      size: 18037
+    - path: evaluation/plots/error_over_time.png
+      hash: md5
+      md5: 2d9b59a57b7fcd24733cd980014e9f16
+      size: 48796
     - path: evaluation/plots/pred_vs_true.png
       hash: md5
-      md5: 4d90bf1526ba4081f971dbabd0e4cad9
-      size: 48379
+      md5: 9fcebbf24738c5b9b7c2fae6836e2382
+      size: 41896
     - path: evaluation/plots/training_history.png
       hash: md5
       md5: 474d40e3589269899e655e9dab4d2df6

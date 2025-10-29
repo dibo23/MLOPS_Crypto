@@ -28,5 +28,8 @@ stages:
     metrics:
     - evaluation/metrics.json
     plots:
+    - evaluation/plots/correlation.png
+    - evaluation/plots/error_distribution.png
+    - evaluation/plots/error_over_time.png
     - evaluation/plots/pred_vs_true.png
     - evaluation/plots/training_history.png
