@@ -1,0 +1,77 @@
+name: MLOps Evaluation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install --requirement requirements-freeze.txt
+
+#      - name: Login to Google Cloud
+#        uses: google-github-actions/auth@v3
+#        with:
+#          credentials_json: '${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}'
+
+      - name: Add raw data
+        run: |
+          mkdir -p data/raw
+          cp path/to/local/data/* data/raw/
+
+
+      - name: Run DVC pipeline
+        run: dvc repro --pull
+
+      - name: Setup CML
+        if: github.event_name == 'pull_request'
+        uses: iterative/setup-cml@v2
+        with:
+          version: '0.20.6'
+
+      - name: Create CML report
+        if: github.event_name == 'pull_request'
+        env:
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch --depth=1 origin main:main
+
+          echo "# Evaluation Report (${{ github.sha }})" >> report.md
+
+          # Compare parameters
+          echo "## Params workflow vs. main" >> report.md
+          dvc params diff main --md >> report.md
+
+          # Compare metrics
+          echo "## Metrics workflow vs. main" >> report.md
+          dvc metrics diff main --md >> report.md
+
+          # Compare plots
+          echo "## Plots" >> report.md
+          dvc plots diff main --md >> report.md
+
+          # Include all evaluation plots
+          for plot in training_history pred_vs_true error_over_time error_distribution correlation; do
+              echo "### ${plot//_/ }" >> report.md
+              echo "#### main" >> report.md
+              echo "![](./dvc_plots/static/main_evaluation_plots_${plot}.png)" >> report.md
+              echo "#### workspace" >> report.md
+              echo "![](./dvc_plots/static/workspace_evaluation_plots_${plot}.png)" >> report.md
+          done
+
+          # Publish report as PR comment
+          cml comment update --target=pr --publish report.md
