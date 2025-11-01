@@ -21,7 +21,7 @@ BUCKET_URI = FEEDER["bucket"].rstrip("/")  # e.g. gs://bucket-crypto-data
 BUCKET = BUCKET_URI.replace("gs://", "")
 OUTPUT_PATH = FEEDER.get("output_path", "ohlcv-data")
 
-exchange = ccxt.binance()
+exchange = ccxt.kucoin()
 storage_client = storage.Client()
 
 def fetch_ohlcv(pair, since, timeframe):
