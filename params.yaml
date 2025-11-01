@@ -1,13 +1,10 @@
-prepare:
-  seed: 77
-  split: 0.2
-  image_size: [32, 32]
-  grayscale: True
+feeder:
+  pairs: ["BTC/USDT"]        # Trading pairs to fetch from Binance
+  interval: "1h"             # Candle interval (1m, 1h, 1d)
+  months: 1                  # Number of months of historical data to retrieve
+  output_path: "ohlcv-data"  # Subfolder inside the bucket (optional)
 
-train:
-  seed: 77
-  lr: 0.0001
-  epochs: 5
-  conv_size: 32
-  dense_size: 64
-  output_classes: 11
+training:
+  epochs: 20                 # Number of training epochs
+  batch_size: 128            # Training batch size
+  data_prefix: "gs://bucket-crypto-data/ohlcv-data"  # Path to input training data
