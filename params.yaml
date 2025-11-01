@@ -6,6 +6,8 @@ feeder:
   output_path: "ohlcv-data"  # Subfolder inside the bucket (optional)
 
 training:
-  epochs: 20                 # Number of training epochs
-  batch_size: 128            # Training batch size
-  data_prefix: "gs://bucket-crypto-data/ohlcv-data"  # Path to input training data
+  epochs: 2
+  batch_size: 128
+  lookback: 30
+  features: ["close"]
+  target: "close"
