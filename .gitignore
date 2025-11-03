@@ -6,3 +6,6 @@ __pycache__/
 
 ## DVC
 /model
+
+# Local data
+/local_data

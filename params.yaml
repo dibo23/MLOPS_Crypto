@@ -1,13 +1,13 @@
-prepare:
-  seed: 77
-  split: 0.2
-  image_size: [32, 32]
-  grayscale: True
+feeder:
+  pairs: ["BTC/USDT"]        # Trading pairs to fetch from Binance
+  interval: "1h"             # Candle interval (1m, 1h, 1d)
+  months: 1                  # Number of months of historical data to retrieve
+  bucket: "gs://bucket-crypto-data"  # GCS bucket where data will be stored
+  output_path: "ohlcv-data"  # Subfolder inside the bucket (optional)
 
-train:
-  seed: 77
-  lr: 0.0001
-  epochs: 5
-  conv_size: 32
-  dense_size: 64
-  output_classes: 11
+training:
+  epochs: 2
+  batch_size: 128
+  lookback: 30
+  features: ["close"]
+  target: "close"
