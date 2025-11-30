@@ -93,6 +93,29 @@ def get_correlation_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figure:
     plt.tight_layout()
     return fig
 
+def plot_all_tested_configs(all_candidates):
+    """
+    Plot loss/val_loss curves for ALL tested hyperparameter candidates,
+    including those eliminated early.
+    """
+    plt.figure(figsize=(14, 7))
+
+    for i, cand in enumerate(all_candidates):
+        history = cand["history"]
+        epochs = [h["epoch"] for h in history]
+        val_losses = [h["val_loss"] for h in history]
+
+        label = f"{i+1}: " + ", ".join(f"{k}={v}" for k, v in cand["config"].items())
+
+        plt.plot(epochs, val_losses, marker='o', label=label)
+
+    plt.title("Validation Loss for ALL Hyperparameter Configurations Tested")
+    plt.xlabel("Epoch")
+    plt.ylabel("Validation Loss")
+    plt.grid(True)
+    plt.legend(fontsize=7, loc="upper right")
+    plt.tight_layout()
+    plt.show()
 
 def main() -> None:
     if len(sys.argv) != 3:
@@ -108,6 +131,16 @@ def main() -> None:
 
     # Load test dataset
     ds_test = tf.data.Dataset.load(str(prepared_dataset_folder / "test"))
+
+    # Charger toutes les configs testées si disponible
+    candidates_path = model_folder / "all_candidates.json"
+    if candidates_path.exists():
+        with open(candidates_path, "r") as f:
+            all_candidates = json.load(f)
+
+        fig = plot_all_tested_configs(all_candidates)
+        fig.savefig(plots_folder / "all_hyperparams.png")
+
 
     # Load model and history
     model = tf.keras.models.load_model(model_folder / "model.keras")

@@ -11,7 +11,7 @@ stages:
     outs:
     - data/prepared
   train:
-    cmd: python3.12 src/train.py data/prepared model
+    cmd: python3.12 src/train_lstm.py data/prepared model
     deps:
     - data/prepared
     - src/train.py
@@ -33,3 +33,4 @@ stages:
     - evaluation/plots/error_over_time.png
     - evaluation/plots/pred_vs_true.png
     - evaluation/plots/training_history.png
+    - evaluation/plots/all_hyperparams.png
