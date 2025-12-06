@@ -1,36 +1,45 @@
 stages:
   prepare:
-    cmd: python3.12 src/prepare.py data/raw/btc_ohlcv_long_5min.csv 
-      data/prepared
+    cmd: python3.12 src/prepare.py data/raw/btc_ohlcv_long_5min.csv data/prepared
     deps:
-    - data/raw
-    - src/prepare.py
-    - src/utils/seed.py
+      - data/raw
+      - src/prepare.py
+      - src/utils/seed.py
     params:
-    - prepare
+      - prepare
     outs:
-    - data/prepared
+      - data/prepared
+
   train:
     cmd: python3.12 src/train_lstm.py data/prepared model
     deps:
-    - data/prepared
-    - src/train.py
-    - src/utils/seed.py
+      - data/prepared
+      - src/train.py
+      - src/utils/seed.py
     params:
-    - train
+      - train
     outs:
-    - model
+      - model
+
   evaluate:
     cmd: python3.12 src/evaluate.py model data/prepared
     deps:
-    - model
-    - src/evaluate.py
+      - model
+      - src/evaluate.py
     metrics:
-    - evaluation/metrics.json
+      - evaluation/metrics.json
     plots:
-    - evaluation/plots/correlation.png
-    - evaluation/plots/error_distribution.png
-    - evaluation/plots/error_over_time.png
-    - evaluation/plots/pred_vs_true.png
-    - evaluation/plots/training_history.png
-    - evaluation/plots/all_hyperparams.png
+      - evaluation/plots/correlation.png
+      - evaluation/plots/error_distribution.png
+      - evaluation/plots/error_over_time.png
+      - evaluation/plots/pred_vs_true.png
+      - evaluation/plots/training_history.png
+      - evaluation/plots/all_hyperparams.png
+
+  evaluate_gcs:
+    cmd: python evaluation/visualize_model.py --bucket bucket-crypto-data --gcs_path ohlcv-data --lookback 30
+    deps:
+      - evaluation/visualize_model.py
+      - params.yaml
+    outs:
+      - evaluation/plots_gcs

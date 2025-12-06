@@ -100,3 +100,23 @@ stages:
       hash: md5
       md5: 474d40e3589269899e655e9dab4d2df6
       size: 40462
+  evaluate_gcs:
+    cmd: python evaluation/visualize_model.py --bucket bucket-crypto-data 
+      --gcs_path ohlcv-data --lookback 30
+    deps:
+    - path: evaluation/visualize_model.py
+      hash: md5
+      md5: ab4c7cad54e57ed0954c20d7b5bcbe91
+      size: 6721
+      isexec: true
+    - path: params.yaml
+      hash: md5
+      md5: aa27107a58f724e6712497b9adf796b9
+      size: 469
+      isexec: true
+    outs:
+    - path: evaluation/plots_gcs
+      hash: md5
+      md5: 1f14c95af1ac5f81c814e8778f814e86.dir
+      size: 391015
+      nfiles: 6

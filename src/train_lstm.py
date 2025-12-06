@@ -3,16 +3,20 @@ import io
 import json
 import argparse
 from datetime import datetime
+from itertools import product
 
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from google.cloud import storage
 import joblib
-from itertools import product
 import yaml
 
-# Parse arguments (passed from Vertex AI or CLI)
+# Chargement des hyperparamètres
+FILE_DIR = os.path.dirname(__file__)
+CONFIGS_PATH = os.path.join(FILE_DIR, "configs.yaml")
+
+# Lecture des arguments Vertex AI
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_prefix", type=str, required=True)
 parser.add_argument("--pair", type=str, default="BTC_USDT")
@@ -22,55 +26,61 @@ parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--lookback", type=int, default=60)
 args = parser.parse_args()
 
-# Define bucket URI and path components
-BUCKET_URI = args.data_prefix.rstrip("/")  # e.g. gs://bucket-crypto-data/ohlcv-data
+# Préparation des chemins GCS
+BUCKET_URI = args.data_prefix.rstrip("/")
 BUCKET = BUCKET_URI.replace("gs://", "").split("/")[0]
 BASE_PATH = "/".join(BUCKET_URI.replace("gs://", "").split("/")[1:])
 
 PAIR = args.pair
 RUN_ID = args.run_id
-LOOKBACK = args.lookback
 
-# Initialize Google Cloud Storage client
 storage_client = storage.Client()
 
-# Helper function to load Parquet file from Google Cloud Storage
+# Lecture Parquet depuis GCS
 def load_parquet_from_gcs(bucket_name, blob_path):
-    """Download a Parquet file from GCS and load it into a DataFrame."""
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
+
+    if not blob.exists():
+        raise FileNotFoundError(f"Missing file: gs://{bucket_name}/{blob_path}")
+
     buf = io.BytesIO()
     blob.download_to_file(buf)
     buf.seek(0)
     return pd.read_parquet(buf)
 
-# Helper function to load a scaler (saved with joblib) from GCS
+# Lecture scaler depuis GCS
 def load_scaler_from_gcs(bucket_name, blob_path):
-    """Download a scaler file from GCS and load it using joblib."""
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
+
+    if not blob.exists():
+        raise FileNotFoundError(f"Missing scaler: gs://{bucket_name}/{blob_path}")
+
     buf = io.BytesIO()
     blob.download_to_file(buf)
     buf.seek(0)
     return joblib.load(buf)
 
-# Helper function to create LSTM sequences
+# Construction des séquences LSTM
 def create_sequences(df, lookback=60):
-    """Generate sequences of data for training LSTM model."""
     cols = ["open", "high", "low", "close", "volume"]
     data = df[cols].values
     X, y = [], []
+
     for i in range(lookback, len(data)):
         X.append(data[i - lookback:i])
-        y.append(data[i, 3])  # 'close' column as target
+        y.append(data[i, 3])
+
     return np.array(X), np.array(y)
 
-def train_one_config(X, y, cfg, epochs, best_val_loss=float("inf") , patience_factor=1.2):
-    """
-    Train one configuration and stop early if it's clearly worse than the best so far.
-    
-    patience_factor: si val_loss > patience_factor * best_val_loss, on stop
-    """
+# Entraînement d'un modèle pour une seule configuration hyperparamètres
+def train_one_config(df, cfg, epochs, patience_factor):
+    tf.keras.backend.clear_session()
+
+    X, y = create_sequences(df, cfg["lookback"])
+    print(f"Training config: {cfg} → X={X.shape}, y={y.shape}")
+
     model = tf.keras.Sequential([
         tf.keras.layers.Input(shape=(cfg["lookback"], X.shape[2])),
         tf.keras.layers.LSTM(cfg["lstm_units"]),
@@ -78,9 +88,12 @@ def train_one_config(X, y, cfg, epochs, best_val_loss=float("inf") , patience_fa
     ])
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=cfg["learning_rate"])
-    model.compile(optimizer="adam", loss="mse")
+    model.compile(optimizer=optimizer, loss="mse")
 
     history_epochs = []
+    best_val_loss = float("inf")
+
+    # Chaque config gère SON propre seuil de pruning
     for epoch in range(epochs):
         hist = model.fit(
             X, y,
@@ -89,68 +102,61 @@ def train_one_config(X, y, cfg, epochs, best_val_loss=float("inf") , patience_fa
             validation_split=0.1,
             verbose=0
         )
+
         val_loss = hist.history["val_loss"][0]
         history_epochs.append({"epoch": epoch + 1, "val_loss": val_loss})
 
-        # Pruning: stop si beaucoup plus mauvais que le meilleur
-        if val_loss > patience_factor * best_val_loss:
-            print(f"Pruning config (val_loss={val_loss:.4f} > {patience_factor}*{best_val_loss:.4f}) at epoch {epoch+1}")
-            break
-
-        # Mettre à jour le meilleur val_loss pour cette config
+        # Mise à jour du meilleur score pour cette configuration
         if val_loss < best_val_loss:
             best_val_loss = val_loss
 
+        # Pruning basé uniquement sur le score interne de la config
+        if val_loss > patience_factor * best_val_loss:
+            print(f"Pruned: val_loss {val_loss:.4f} > threshold {patience_factor * best_val_loss:.4f}")
+            break
+
     return model, history_epochs, best_val_loss
 
-
-def successive_halving(X, y, configs, max_epochs=20, patience_factor=1.2):
+# Recherche hyperparamètres (successive halving simplifié)
+def evaluate_all_configs(df, configs, max_epochs, patience_factor):
     candidates = []
-    best_val_loss_overall = float("inf")
 
     for cfg in configs:
-        model, hist, best_val_loss_overall = train_one_config(
-            X, y,
+        model, hist, final_val = train_one_config(
+            df,
             cfg,
             epochs=max_epochs,
-            best_val_loss=best_val_loss_overall,
             patience_factor=patience_factor
         )
 
-        cand = {
+        candidates.append({
             "config": cfg,
             "history": hist,
-            "final_val_loss": hist[-1]["val_loss"],
+            "final_val_loss": float(final_val),
             "model": model
-        }
-        candidates.append(cand)
+        })
 
-        # Tri pour garder le meilleur val_loss global à jour
-        candidates.sort(key=lambda c: c["final_val_loss"])
-        best_val_loss_overall = candidates[0]["final_val_loss"]
-
+    # Tri final par meilleur val_loss global
+    candidates.sort(key=lambda c: c["final_val_loss"])
     return candidates
 
-
-# Load training data and scaler from GCS
+# Chargement dataset
 train_path = f"{BASE_PATH}/{PAIR}_train_{RUN_ID}.parquet"
 scaler_path = f"{BASE_PATH}/scalers/scaler_{PAIR}_{RUN_ID}.pkl"
 
-print(f"Loading training data from gs://{BUCKET}/{train_path}")
+print(f"Loading training data: gs://{BUCKET}/{train_path}")
 df = load_parquet_from_gcs(BUCKET, train_path)
 
-print(f"Loading scaler from gs://{BUCKET}/{scaler_path}")
+if "timestamp" in df.columns:
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+
+print(f"Loading scaler: gs://{BUCKET}/{scaler_path}")
 scaler = load_scaler_from_gcs(BUCKET, scaler_path)
 
-# Create sequences for LSTM training
-X, y = create_sequences(df, LOOKBACK)
-print(f"Sequences ready: X={X.shape}, y={y.shape}")
-
-# Lire le fichier YAML
-with open("configs.yaml", "r") as f:
+# Chargement configs YAML
+with open(CONFIGS_PATH, "r") as f:
     config_yaml = yaml.safe_load(f)
 
-# Générer toutes les combinaisons possibles de batch_size, lookback et lstm_units
 configs_to_test = [
     {
         "batch_size": b,
@@ -168,27 +174,40 @@ configs_to_test = [
 max_epochs = config_yaml.get("max_epochs", 20)
 patience_factor = config_yaml.get("patience_factor", 1.2)
 
-all_candidates = successive_halving(X, y,configs_to_test,max_epochs=max_epochs,patience_factor=patience_factor)
+# Recherche meilleure combinaison
+all_candidates = evaluate_all_configs(
+    df,
+    configs_to_test,
+    max_epochs=max_epochs,
+    patience_factor=patience_factor
+)
 
-
-# garder le meilleur
+# Meilleur modèle sélectionné
 best = all_candidates[0]
 model = best["model"]
 history = best["history"]
 best_config = best["config"]
 
-# Save the trained model to GCS
 timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
 model_dir = f"{BASE_PATH}/models/{PAIR}_{RUN_ID}_{timestamp}"
+bucket = storage_client.bucket(BUCKET)
+
+# Sauvegarde modèle
 local_model_path = f"lstm_model_{PAIR}.keras"
 model.save(local_model_path)
+bucket.blob(f"{model_dir}/{local_model_path}").upload_from_filename(local_model_path)
 
-bucket = storage_client.bucket(BUCKET)
-blob = bucket.blob(f"{model_dir}/{local_model_path}")
-blob.upload_from_filename(local_model_path)
-print(f"Model uploaded to gs://{BUCKET}/{model_dir}/{local_model_path}")
+# Sauvegarde scaler
+scaler_local_path = "scaler.pkl"
+joblib.dump(scaler, scaler_local_path)
+bucket.blob(f"{model_dir}/scaler.pkl").upload_from_filename(scaler_local_path)
 
-# Sauvegarde des metrics avec hyperparamètres
+# Sauvegarde dataset utilisé
+train_local_path = "train_data.parquet"
+df.to_parquet(train_local_path)
+bucket.blob(f"{model_dir}/train_data.parquet").upload_from_filename(train_local_path)
+
+# Sauvegarde métriques
 metrics = {
     "run_id": RUN_ID,
     "pair": PAIR,
@@ -197,18 +216,15 @@ metrics = {
     "final_val_loss": float(history[-1]["val_loss"]),
     "best_config": best_config
 }
+bucket.blob(f"{model_dir}/metrics.json").upload_from_string(json.dumps(metrics, indent=2))
 
-metrics_blob = bucket.blob(f"{model_dir}/metrics.json")
-metrics_blob.upload_from_string(json.dumps(metrics, indent=2))
-print(f"Metrics uploaded: {metrics}")
-
-# Upload all hyperparameter candidates tested
-local_candidates_path = "all_candidates.json"
+# Nettoyage des objets lourds avant export
 for c in all_candidates:
     c.pop("model", None)
-with open(local_candidates_path, "w") as f:
+
+with open("all_candidates.json", "w") as f:
     json.dump(all_candidates, f, indent=2)
 
-candidates_blob = bucket.blob(f"{model_dir}/all_candidates.json")
-candidates_blob.upload_from_filename(local_candidates_path)
-print(f"All hyperparameter candidates uploaded to gs://{BUCKET}/{model_dir}/all_candidates.json")
+bucket.blob(f"{model_dir}/all_candidates.json").upload_from_filename("all_candidates.json")
+
+print("Training completed successfully.")
