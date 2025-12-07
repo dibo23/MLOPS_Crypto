@@ -12,7 +12,7 @@ from google.cloud import storage
 import joblib
 import yaml
 
-# Chargement des hyperparamètres
+# Chargement des hyperparamètres YAML
 FILE_DIR = os.path.dirname(__file__)
 CONFIGS_PATH = os.path.join(FILE_DIR, "configs.yaml")
 
@@ -26,13 +26,17 @@ parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--lookback", type=int, default=60)
 args = parser.parse_args()
 
-# Préparation des chemins GCS
+# Standardisation du nom
+PAIR = args.pair.replace("/", "_")
+RUN_ID = args.run_id
+
+# Préparation chemins GCS
 BUCKET_URI = args.data_prefix.rstrip("/")
 BUCKET = BUCKET_URI.replace("gs://", "").split("/")[0]
-BASE_PATH = "/".join(BUCKET_URI.replace("gs://", "").split("/")[1:])
 
-PAIR = args.pair
-RUN_ID = args.run_id
+# Sécurisation BASE_PATH même si aucun sous-chemin après le bucket
+parts = BUCKET_URI.replace("gs://", "").split("/")
+BASE_PATH = "/".join(parts[1:]) if len(parts) > 1 else ""
 
 storage_client = storage.Client()
 
@@ -74,7 +78,7 @@ def create_sequences(df, lookback=60):
 
     return np.array(X), np.array(y)
 
-# Entraînement d'un modèle pour une seule configuration hyperparamètres
+# Entraînement sur une seule config
 def train_one_config(df, cfg, epochs, patience_factor):
     tf.keras.backend.clear_session()
 
@@ -93,7 +97,6 @@ def train_one_config(df, cfg, epochs, patience_factor):
     history_epochs = []
     best_val_loss = float("inf")
 
-    # Chaque config gère SON propre seuil de pruning
     for epoch in range(epochs):
         hist = model.fit(
             X, y,
@@ -106,18 +109,16 @@ def train_one_config(df, cfg, epochs, patience_factor):
         val_loss = hist.history["val_loss"][0]
         history_epochs.append({"epoch": epoch + 1, "val_loss": val_loss})
 
-        # Mise à jour du meilleur score pour cette configuration
         if val_loss < best_val_loss:
             best_val_loss = val_loss
 
-        # Pruning basé uniquement sur le score interne de la config
         if val_loss > patience_factor * best_val_loss:
             print(f"Pruned: val_loss {val_loss:.4f} > threshold {patience_factor * best_val_loss:.4f}")
             break
 
     return model, history_epochs, best_val_loss
 
-# Recherche hyperparamètres (successive halving simplifié)
+# Recherche hyperparamètres
 def evaluate_all_configs(df, configs, max_epochs, patience_factor):
     candidates = []
 
@@ -136,9 +137,9 @@ def evaluate_all_configs(df, configs, max_epochs, patience_factor):
             "model": model
         })
 
-    # Tri final par meilleur val_loss global
     candidates.sort(key=lambda c: c["final_val_loss"])
     return candidates
+
 
 # Chargement dataset
 train_path = f"{BASE_PATH}/{PAIR}_train_{RUN_ID}.parquet"
@@ -146,6 +147,9 @@ scaler_path = f"{BASE_PATH}/scalers/scaler_{PAIR}_{RUN_ID}.pkl"
 
 print(f"Loading training data: gs://{BUCKET}/{train_path}")
 df = load_parquet_from_gcs(BUCKET, train_path)
+
+if len(df) == 0:
+    raise ValueError("Dataset loaded from GCS is empty — aborting training.")
 
 if "timestamp" in df.columns:
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
@@ -174,7 +178,7 @@ configs_to_test = [
 max_epochs = config_yaml.get("max_epochs", 20)
 patience_factor = config_yaml.get("patience_factor", 1.2)
 
-# Recherche meilleure combinaison
+# Recherche meilleure config
 all_candidates = evaluate_all_configs(
     df,
     configs_to_test,
@@ -182,7 +186,6 @@ all_candidates = evaluate_all_configs(
     patience_factor=patience_factor
 )
 
-# Meilleur modèle sélectionné
 best = all_candidates[0]
 model = best["model"]
 history = best["history"]
@@ -193,7 +196,7 @@ model_dir = f"{BASE_PATH}/models/{PAIR}_{RUN_ID}_{timestamp}"
 bucket = storage_client.bucket(BUCKET)
 
 # Sauvegarde modèle
-local_model_path = f"lstm_model_{PAIR}.keras"
+local_model_path = f"lstm_model_{PAIR}.h5"
 model.save(local_model_path)
 bucket.blob(f"{model_dir}/{local_model_path}").upload_from_filename(local_model_path)
 
@@ -207,7 +210,7 @@ train_local_path = "train_data.parquet"
 df.to_parquet(train_local_path)
 bucket.blob(f"{model_dir}/train_data.parquet").upload_from_filename(train_local_path)
 
-# Sauvegarde métriques
+# Sauvegarde metrics
 metrics = {
     "run_id": RUN_ID,
     "pair": PAIR,
@@ -218,7 +221,7 @@ metrics = {
 }
 bucket.blob(f"{model_dir}/metrics.json").upload_from_string(json.dumps(metrics, indent=2))
 
-# Nettoyage des objets lourds avant export
+# Nettoyage candidates
 for c in all_candidates:
     c.pop("model", None)
 

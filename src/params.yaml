@@ -1,13 +1,13 @@
 feeder:
-  pairs: ["BTC/USDT"]        # Trading pairs to fetch from Binance
-  interval: "1h"             # Candle interval (1m, 1h, 1d)
-  months: 1                  # Number of months of historical data to retrieve
+  pairs: ["BTC/USDT"]          # Trading pairs to fetch from KuCoin
+  interval: "1h"               # Candle interval (1m, 1h, 1d)
+  days: 90                     # Number of days of historical data to retrieve
   bucket: "gs://bucket-crypto-data"  # GCS bucket where data will be stored
-  output_path: "ohlcv-data"  # Subfolder inside the bucket (optional)
+  output_path: "ohlcv-data"    # Subfolder inside the bucket (optional)
 
 training:
   epochs: 2
   batch_size: 128
-  lookback: 30
+  lookback: 30                 # Number of candles fed into the LSTM
   features: ["close"]
   target: "close"

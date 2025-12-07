@@ -2,6 +2,7 @@ import os
 import io
 import time
 import yaml
+import argparse
 import pandas as pd
 import ccxt
 import joblib
@@ -9,37 +10,43 @@ from datetime import datetime, timedelta, timezone
 from sklearn.preprocessing import MinMaxScaler
 from google.cloud import storage
 
-# Load project configuration from params.yaml
+# Chargement des paramètres YAML du projet
 FILE_DIR = os.path.dirname(__file__)
 PARAMS_PATH = os.path.join(FILE_DIR, "params.yaml")
 
 with open(PARAMS_PATH, "r") as f:
     config = yaml.safe_load(f)
 
-# Extract feeder and training sections from the configuration
+# Paramètres fetch OHLCV
 FEEDER = config["feeder"]
-TRAINING = config["training"]
-
-# Feeder parameters
-PAIRS = FEEDER["pairs"]
 INTERVAL = FEEDER["interval"]
 DAYS = FEEDER.get("days", 90)
 
-# GCS bucket configuration
+# Configuration GCS
 BUCKET_URI = FEEDER["bucket"].rstrip("/")
-BUCKET = BUCKET_URI.replace("gs://", "")
+BUCKET = BUCKET_URI.replace("gs://", "").split("/")[0]  # Correction
 OUTPUT_PATH = FEEDER.get("output_path", "ohlcv-data")
 
-# API and GCS clients
+# Exchange + client GCS
 exchange = ccxt.kucoin()
 storage_client = storage.Client()
 
+# Args depuis GitHub Actions pour aligner RUN_ID
+parser = argparse.ArgumentParser()
+parser.add_argument("--run_id", type=str, required=True)
+parser.add_argument("--pair", type=str, required=True)
+args = parser.parse_args()
+
+RUN_ID = args.run_id
+PAIR_RAW = args.pair                  # Forme API : BTC/USDT
+PAIR = args.pair.replace("/", "_")    # Forme GCS : BTC_USDT
+
 def fetch_ohlcv(pair, since, timeframe):
-    """Fetch OHLCV data from KuCoin since the given timestamp."""
+    """Télécharge OHLCV depuis KuCoin."""
     all_data = []
 
     while since < time.time() * 1000:
-        print(f"Fetching {pair} since {datetime.fromtimestamp(since / 1000, tz=timezone.utc)}...")
+        print(f"Fetching {pair} since {datetime.fromtimestamp(since/1000, tz=timezone.utc)}...")
         data = exchange.fetch_ohlcv(pair, timeframe=timeframe, since=int(since))
 
         if not data:
@@ -49,25 +56,26 @@ def fetch_ohlcv(pair, since, timeframe):
         since = data[-1][0] + 1
         time.sleep(exchange.rateLimit / 1000)
 
-        if len(all_data) > 100000:
+        if len(all_data) > 200000:
             break
 
     df = pd.DataFrame(all_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    print(f"{len(df)} candles fetched for {pair}.")
+    print(f"{len(df)} rows fetched for {pair}")
     return df
 
 def normalize_data(df):
-    """Normalize numeric columns using MinMaxScaler while keeping timestamp intact."""
+    """Normalisation MinMax."""
     cols = ["open", "high", "low", "close", "volume"]
     scaler = MinMaxScaler()
 
-    df_norm = df.copy()
-    df_norm[cols] = scaler.fit_transform(df[cols])
-    return df_norm, scaler
+    df2 = df.copy()
+    df2[cols] = scaler.fit_transform(df[cols])
+
+    return df2, scaler
 
 def upload_to_gcs(df, path):
-    """Upload a DataFrame to Google Cloud Storage in Parquet format."""
+    """Upload DataFrame vers GCS."""
     bucket = storage_client.bucket(BUCKET)
 
     buf = io.BytesIO()
@@ -76,50 +84,34 @@ def upload_to_gcs(df, path):
 
     blob = bucket.blob(path)
     blob.upload_from_file(buf, rewind=True)
-    print(f"Uploaded to gs://{BUCKET}/{path}")
+    print(f"Uploaded: gs://{BUCKET}/{path}")
 
 def main():
-    # Compute start timestamp based on the number of historical days
     since = (datetime.now(timezone.utc) - timedelta(days=DAYS)).timestamp() * 1000
 
-    # Training session identifier
-    run_id = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    print(f"\n=== RUN ID: {run_id} ===")
+    print(f"\n=== Processing {PAIR} with RUN_ID {RUN_ID} ===")
 
-    for pair in PAIRS:
-        print(f"\n=== Processing {pair} ===")
+    # 1) Récupération RAW
+    df_raw = fetch_ohlcv(PAIR_RAW, since, INTERVAL)
 
-        # Raw historical OHLCV fetch
-        df_raw = fetch_ohlcv(pair, since, INTERVAL)
+    if df_raw.empty:
+        raise ValueError(f"No data fetched for {PAIR_RAW}. Cannot continue.")
 
-        # Upload raw data
-        raw_path = f"{OUTPUT_PATH}/{pair.replace('/', '_')}_raw_{run_id}.parquet"
-        upload_to_gcs(df_raw, raw_path)
+    upload_to_gcs(df_raw, f"{OUTPUT_PATH}/{PAIR}_raw_{RUN_ID}.parquet")
 
-        # Normalize and upload train dataset
-        df_train, scaler = normalize_data(df_raw)
-        train_path = f"{OUTPUT_PATH}/{pair.replace('/', '_')}_train_{run_id}.parquet"
-        upload_to_gcs(df_train, train_path)
+    # 2) Normalisation
+    df_train, scaler = normalize_data(df_raw)
+    upload_to_gcs(df_train, f"{OUTPUT_PATH}/{PAIR}_train_{RUN_ID}.parquet")
 
-        # Save and upload fitted scaler
-        local_scaler_path = f"scaler_{pair.replace('/', '_')}_{run_id}.pkl"
-        joblib.dump(scaler, local_scaler_path)
+    # 3) Upload scaler
+    local_scaler = f"scaler_{PAIR}_{RUN_ID}.pkl"
+    joblib.dump(scaler, local_scaler)
 
-        bucket = storage_client.bucket(BUCKET)
-        blob = bucket.blob(f"{OUTPUT_PATH}/scalers/{local_scaler_path}")
-        blob.upload_from_filename(local_scaler_path)
-        print(f"Scaler uploaded to gs://{BUCKET}/{OUTPUT_PATH}/scalers/{local_scaler_path}")
+    bucket = storage_client.bucket(BUCKET)
+    bucket.blob(f"{OUTPUT_PATH}/scalers/{local_scaler}").upload_from_filename(local_scaler)
+    os.remove(local_scaler)
 
-        os.remove(local_scaler_path)
-
-    # Indicate that training will be done later via Makefile
-    print("\nFetch and preprocessing completed locally.")
-    print("Training will be launched with: make train")
-    print(f"Use this RUN_ID for training: {run_id}\n")
-
-    # Save run_id locally for the Makefile
-    with open("last_run_id.txt", "w") as f:
-        f.write(run_id)
+    print("\nDataset + scaler uploaded successfully.\n")
 
 if __name__ == "__main__":
     main()
