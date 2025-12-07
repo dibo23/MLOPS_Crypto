@@ -31,8 +31,10 @@ jobs:
         gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
     - name: Launch Vertex AI Training Job
+      id: launchjob
       run: |
         RUN_ID=$(date +%s)
+        echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
         echo "Using RUN_ID=$RUN_ID"
 
         gcloud ai custom-jobs create \
@@ -40,7 +42,22 @@ jobs:
           --display-name="train-${RUN_ID}" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
           --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=src.train_lstm \
-          --args="--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data --pair=BTC_USDT --run_id=${RUN_ID}"
+          --args=--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data \
+          --args=--pair=BTC_USDT \
+          --args=--run_id=$RUN_ID
+
+    - name: Wait for Vertex AI training to finish (stream logs)
+      run: |
+        JOB_ID=$(gcloud ai custom-jobs list \
+          --region=${{ secrets.VERTEX_REGION }} \
+          --format="value(name)" \
+          --sort-by=~createTime \
+          --limit=1)
+
+        echo "Detected JOB_ID=$JOB_ID"
+
+        gcloud ai custom-jobs stream-logs $JOB_ID \
+          --region=${{ secrets.VERTEX_REGION }}
 
     - name: Install dependencies
       run: pip install -r requirements.txt
