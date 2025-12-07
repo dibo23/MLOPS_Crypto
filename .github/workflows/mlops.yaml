@@ -37,8 +37,7 @@ jobs:
           --display-name="train-$(date +%s)" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
           --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=src.train_lstm \
-          --args="--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data" \
-                "--pair=BTC_USDT"
+          --args="--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data" "--pair=BTC_USDT"
 
     - name: Install dependencies
       run: pip install -r requirements.txt
