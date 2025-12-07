@@ -3,6 +3,8 @@ pyyaml==6.0.2
 dvc[gs]==3.60.1
 pandas==2.2.3
 scikit-learn==1.4.2
-ccxt ==4.5.14
+ccxt==4.5.14
 pyarrow==22.0.0
 google-cloud-storage==3.4.1
+tensorflow==2.16.1
+joblib==1.4.2
