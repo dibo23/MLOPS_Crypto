@@ -23,10 +23,10 @@ setup(
     },
 
     install_requires=[
+        "numpy>=1.22",
         "pandas",                            # Traitement des données
         "scikit-learn",                      # Normalisation / ML
         "google-cloud-storage",              # Accès au bucket GCS
-        "tensorflow",                        # TF déjà disponible dans l’image Vertex
         "python-json-logger",                # Corrige warning des logs Vertex
         "joblib",                            # Pour scaler.pkl
         "pyyaml"                             # Pour lire params.yaml et configs.yaml
