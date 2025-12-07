@@ -12,12 +12,10 @@ import zipfile
 import uuid
 from google.cloud import storage
 
-
 # Crée un dossier si nécessaire
 def ensure_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)
-
 
 # Télécharge un fichier GCS et renvoie ses bytes
 def load_from_gcs(bucket_name, blob_path):
@@ -25,7 +23,6 @@ def load_from_gcs(bucket_name, blob_path):
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
     return blob.download_as_bytes()
-
 
 # Gestion robuste de tous les formats de modèles Keras
 def load_model_from_gcs_safely(bucket_name, blob_name):
@@ -36,12 +33,12 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
     blob = bucket.blob(blob_name)
 
     tmp_dir = tempfile.mkdtemp(prefix="model_" + str(uuid.uuid4())[:8] + "_")
-    tmp_file = os.path.join(tmp_dir, "model_file")
+    tmp_file = os.path.join(tmp_dir, os.path.basename(blob_name))
     blob.download_to_filename(tmp_file)
 
-    # Cas direct : .keras ou .h5
-    if blob_name.endswith(".keras") or blob_name.endswith(".h5"):
-        print("Loading simple Keras/H5 model")
+    # Cas direct : .h5 ou .keras
+    if blob_name.endswith(".h5") or blob_name.endswith(".keras"):
+        print("Loading model (.h5 / .keras)")
         return tf.keras.models.load_model(tmp_file)
 
     # Cas ZIP SavedModel
@@ -55,11 +52,10 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
 
     # Cas dossier SavedModel téléchargé
     try:
-        print("Trying to load SavedModel directory")
+        print("Trying SavedModel directory")
         return tf.keras.models.load_model(tmp_dir)
     except Exception as e:
         raise RuntimeError(f"Impossible de charger le modèle : {e}")
-
 
 # Recherche du dossier modèle (avec RUN_ID facultatif)
 def get_model_folder(bucket_name, base_path, run_id=None):
@@ -77,12 +73,12 @@ def get_model_folder(bucket_name, base_path, run_id=None):
 
     folders = sorted(folders)
 
-    # mode automatique = dernier modèle
+    # Mode automatique = dernier modèle
     if run_id is None:
         print("Latest model folder:", folders[-1].rstrip("/"))
         return folders[-1].rstrip("/")
 
-    # mode ciblé par RUN_ID
+    # Mode ciblé par RUN_ID
     for f in folders:
         if run_id in f:
             print("Selected model folder:", f.rstrip("/"))
@@ -90,27 +86,40 @@ def get_model_folder(bucket_name, base_path, run_id=None):
 
     raise ValueError(f"Aucun modèle trouvé contenant RUN_ID={run_id}")
 
-
-# Recherche robuste du fichier .keras dans un dossier modèle GCS
-def find_keras_model(bucket_name, model_folder):
+# Recherche robuste du fichier modèle (.h5 / .keras / .zip)
+def find_model_file(bucket_name, model_folder):
     client = storage.Client()
     bucket = client.bucket(bucket_name)
 
     blobs = list(bucket.list_blobs(prefix=model_folder + "/"))
+
+    # Priorité au .h5 (format stable Keras 3)
+    h5_files = [b.name for b in blobs if b.name.endswith(".h5")]
+    if h5_files:
+        print("Detected H5 model file:", h5_files[0])
+        return h5_files[0]
+
+    # Sinon .keras
     keras_files = [b.name for b in blobs if b.name.endswith(".keras")]
+    if keras_files:
+        print("Detected .keras model file:", keras_files[0])
+        return keras_files[0]
 
-    if not keras_files:
-        raise FileNotFoundError(f"Aucun fichier .keras trouvé dans {model_folder}")
+    # Sinon ZIP SavedModel
+    zip_files = [b.name for b in blobs if b.name.endswith(".zip")]
+    if zip_files:
+        print("Detected ZIP SavedModel:", zip_files[0])
+        return zip_files[0]
 
-    print("Detected model file:", keras_files[0])
-    return keras_files[0]
-
+    raise FileNotFoundError(
+        f"Aucun fichier modèle (.h5, .keras ou .zip) trouvé dans {model_folder}"
+    )
 
 # Chargement du modèle + scaler + dataset associé
 def load_artifacts_gcs(bucket_name, base_path, run_id=None):
     model_folder = get_model_folder(bucket_name, base_path, run_id)
 
-    model_blob = find_keras_model(bucket_name, model_folder)
+    model_blob = find_model_file(bucket_name, model_folder)
     scaler_blob = f"{model_folder}/scaler.pkl"
     parquet_blob = f"{model_folder}/train_data.parquet"
 
@@ -119,7 +128,6 @@ def load_artifacts_gcs(bucket_name, base_path, run_id=None):
     df = pd.read_parquet(io.BytesIO(load_from_gcs(bucket_name, parquet_blob)))
 
     return model, df, scaler, model_folder
-
 
 # Construction des séquences LSTM
 def create_sequences(df, lookback):
@@ -132,20 +140,17 @@ def create_sequences(df, lookback):
         y.append(data[i, 3])
     return np.array(X), np.array(y)
 
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--gcs_path", required=True)
     parser.add_argument("--lookback", type=int, required=True)
-    parser.add_argument("--run_id", required=False)  # <-- important
+    parser.add_argument("--run_id", required=False)
     args = parser.parse_args()
 
     print("\n=== Loading artifacts from GCS ===")
     model, df, scaler, model_folder = load_artifacts_gcs(
-        args.bucket,
-        args.gcs_path,
-        run_id=args.run_id
+        args.bucket, args.gcs_path, run_id=args.run_id
     )
 
     run_id = os.path.basename(model_folder)
@@ -157,7 +162,7 @@ def main():
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         df = df.set_index("timestamp")
 
-    # Construction des séquences normalisées
+    # Construction des séquences
     X, y = create_sequences(df, args.lookback)
     preds = model.predict(X).reshape(-1)
 
@@ -176,7 +181,6 @@ def main():
     pred_prices = scaler.inverse_transform(pred_full)[:, 3]
     dates = df.index[args.lookback:]
 
-    # MAPE USD correct
     mape = float(np.mean(np.abs((real_prices - pred_prices) / real_prices)) * 100)
 
     # Sauvegarde métriques
@@ -253,7 +257,6 @@ def main():
         f.write(f"{future_time}, {future_usd}")
 
     print("\nEvaluation saved to:", out_dir)
-
 
 if __name__ == "__main__":
     main()
