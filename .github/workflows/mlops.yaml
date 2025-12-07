@@ -14,7 +14,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # 2) Authenticate to GCP
+    # 2) Auth GCP
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
       with:
@@ -25,34 +25,31 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 3) Build package for Vertex AI
+    # 3) Build package
     - name: Build Python package for Vertex
       run: tar -czf src.tar.gz src setup.py
 
-    # 4) Upload package + requirements.txt to GCS
-    - name: Upload package and requirements to GCS
-      run: |
-        gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
-        gsutil cp requirements.txt gs://${{ secrets.GCS_BUCKET }}/code/requirements.txt
+    # 4) Upload package to GCS
+    - name: Upload package to GCS
+      run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
     # 5) Launch Vertex AI training job
     - name: Launch Vertex AI Job
       run: |
         RUN_ID=$(date +%s)
+        echo "$RUN_ID" > run_id.txt
         echo "RUN_ID=$RUN_ID"
 
         gcloud ai custom-jobs create \
           --region=${{ secrets.VERTEX_REGION }} \
           --display-name="train-${RUN_ID}" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
-          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=MLOPS_Crypto.train_lstm,requirements=gs://${{ secrets.GCS_BUCKET }}/code/requirements.txt \
+          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=MLOPS_Crypto.train_lstm \
           --args=--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data \
           --args=--pair=BTC_USDT \
           --args=--run_id=$RUN_ID
 
-        echo "$RUN_ID" > run_id.txt
-
-    # 6) Wait for job to finish
+    # 6) Wait for Vertex AI job to finish
     - name: Wait for Vertex AI Training Job
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -68,7 +65,7 @@ jobs:
         gcloud ai custom-jobs stream-logs $JOB_ID \
           --region=${{ secrets.VERTEX_REGION }}
 
-    # 7) Install local dependencies for visualization
+    # 7) Install deps locally (visualization)
     - name: Install local dependencies
       run: pip install -r requirements.txt
 
@@ -82,7 +79,7 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 9) Upload evaluation plots
+    # 9) Upload plots
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
