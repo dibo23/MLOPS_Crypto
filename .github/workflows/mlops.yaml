@@ -2,7 +2,7 @@ name: Vertex MLOps Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch: {}
 
 jobs:
@@ -11,7 +11,7 @@ jobs:
 
     steps:
     # 1) Checkout
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
     # 2) Auth GCP
@@ -20,48 +20,53 @@ jobs:
       with:
         credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-    # 3) Setup gcloud
-    - name: Set up Google Cloud SDK
+    - name: Setup gcloud
       uses: google-github-actions/setup-gcloud@v2
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 4) Build package
-    - name: Build package for Vertex AI
+    # 3) Build package
+    - name: Build Python package for Vertex
       run: tar -czf src.tar.gz src setup.py
 
-    # 5) Upload package
+    # 4) Upload package to GCS
     - name: Upload package to GCS
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
-    # 6) Launch Vertex AI Training job (FIXED)
-    - name: Launch Vertex AI Training Job
+    # 5) Launch Vertex AI training job
+    - name: Launch Vertex AI Job
       run: |
         RUN_ID=$(date +%s)
-        echo "Using RUN_ID=$RUN_ID"
+        echo "RUN_ID=$RUN_ID"
 
         gcloud ai custom-jobs create \
           --region=${{ secrets.VERTEX_REGION }} \
           --display-name="train-${RUN_ID}" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
-          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=src.train_lstm,requirements=requirements.txt \
-          --args="--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data --pair=BTC_USDT --run_id=${RUN_ID}"
+          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=MLOPS_Crypto.train_lstm \
+          --args=--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data \
+          --args=--pair=BTC_USDT \
+          --args=--run_id=$RUN_ID
 
-    # 7) Install deps for visualization
-    - name: Install dependencies
+        echo "RUN_ID=$RUN_ID" > run_id.txt
+
+    # 6) Install deps locally for visualization
+    - name: Install local dependencies
       run: pip install -r requirements.txt
 
-    # 8) Visualize
-    - name: Visualize Model Using GCS
+    # 7) Visualize model
+    - name: Visualize trained model
       run: |
+        RUN_ID=$(cat run_id.txt)
         python3 src/visualize_model.py \
           --bucket ${{ secrets.GCS_BUCKET }} \
           --gcs_path ohlcv-data \
-          --lookback 30
+          --lookback 30 \
+          --run_id $RUN_ID
 
-    # 9) Export evaluation plots
+    # 8) Upload plots
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
         name: evaluation-plots
-        path: evaluation/plots*
+        path: evaluation/
