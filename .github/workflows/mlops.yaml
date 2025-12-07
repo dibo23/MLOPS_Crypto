@@ -42,7 +42,7 @@ jobs:
       run: |
         RUN_ID=$(date +%s)
         echo "$RUN_ID" > run_id.txt
-        python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC_USDT
+        python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC/USDT
 
     # 7) Lancement du job Vertex AI utilisant le package GCS
     - name: Launch Vertex AI Job
