@@ -2,7 +2,7 @@ name: Vertex MLOps Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch: {}
 
 jobs:
@@ -10,9 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    # 1) Checkout
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    # 2) Authenticate GCP
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
       with:
@@ -23,15 +25,17 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
+    # 3) Build training package
     - name: Build package for Vertex AI
       run: tar -czf src.tar.gz src setup.py
 
     - name: Upload package to GCS
-      run: |
-        gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
+      run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
+    # 4) Launch Vertex AI job
     - name: Launch Vertex AI Training Job
-      id: launchjob
+    # store job id
+      id: launch
       run: |
         RUN_ID=$(date +%s)
         echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
@@ -39,29 +43,33 @@ jobs:
 
         gcloud ai custom-jobs create \
           --region=${{ secrets.VERTEX_REGION }} \
-          --display-name="train-${RUN_ID}" \
+          --display-name="train-$RUN_ID" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
           --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=src.train_lstm \
-          --args=--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data \
-          --args=--pair=BTC_USDT \
-          --args=--run_id=$RUN_ID
+          --args="--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data" \
+          --args="--pair=BTC_USDT" \
+          --args="--run_id=$RUN_ID"
 
-    - name: Wait for Vertex AI training to finish (stream logs)
+    # 5) Wait for job + stream logs
+    - name: Stream Vertex Logs
       run: |
         JOB_ID=$(gcloud ai custom-jobs list \
           --region=${{ secrets.VERTEX_REGION }} \
           --format="value(name)" \
-          --sort-by=~createTime \
-          --limit=1)
+          --filter="displayName=train-$RUN_ID" \
+          | head -n 1)
 
         echo "Detected JOB_ID=$JOB_ID"
 
-        gcloud ai custom-jobs stream-logs $JOB_ID \
+        gcloud ai custom-jobs stream-logs \
+          $JOB_ID \
           --region=${{ secrets.VERTEX_REGION }}
 
+    # 6) Local dependencies (for visualization)
     - name: Install dependencies
       run: pip install -r requirements.txt
 
+    # 7) Visualize model from GCS
     - name: Visualize Model Using GCS
       run: |
         python3 src/visualize_model.py \
@@ -69,6 +77,7 @@ jobs:
           --gcs_path ohlcv-data \
           --lookback 30
 
+    # 8) Save artifacts
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
