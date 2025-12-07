@@ -32,10 +32,9 @@ jobs:
 
     # 5) Upload package
     - name: Upload package to GCS
-      run: |
-        gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
+      run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
-    # 6) Launch Vertex AI Training job (PATCHED)
+    # 6) Launch Vertex AI Training job (FIXED)
     - name: Launch Vertex AI Training Job
       run: |
         RUN_ID=$(date +%s)
@@ -45,13 +44,14 @@ jobs:
           --region=${{ secrets.VERTEX_REGION }} \
           --display-name="train-${RUN_ID}" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
-          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,entry-point="bash",args="-c \"pip install python-json-logger && python -m src.train_lstm --data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data --pair=BTC_USDT --run_id=${RUN_ID}\""
+          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=src.train_lstm,requirements=requirements.txt \
+          --args="--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data --pair=BTC_USDT --run_id=${RUN_ID}"
 
-    # 7) Install libs for visualization
+    # 7) Install deps for visualization
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    # 8) Visualize from GCS
+    # 8) Visualize
     - name: Visualize Model Using GCS
       run: |
         python3 src/visualize_model.py \
