@@ -32,12 +32,15 @@ jobs:
 
     - name: Launch Vertex AI Training Job
       run: |
+        RUN_ID=$(date +%s)
+        echo "Using RUN_ID=$RUN_ID"
+
         gcloud ai custom-jobs create \
           --region=${{ secrets.VERTEX_REGION }} \
-          --display-name="train-$(date +%s)" \
+          --display-name="train-${RUN_ID}" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
           --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=src.train_lstm \
-          --args="--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data" "--pair=BTC_USDT"
+          --args="--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data --pair=BTC_USDT --run_id=${RUN_ID}"
 
     - name: Install dependencies
       run: pip install -r requirements.txt
