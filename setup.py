@@ -23,11 +23,12 @@ setup(
     },
 
     install_requires=[
-        "numpy>=1.22",
+        "numpy>=1.22",                       # Requis par pandas / sklearn / TensorFlow (pas installé sinon)
         "pandas",                            # Traitement des données
         "scikit-learn",                      # Normalisation / ML
         "google-cloud-storage",              # Accès au bucket GCS
-        "python-json-logger",                # Corrige warning des logs Vertex
+        "python-json-logger>=2.0.4",         # Corrige warning des logs Vertex
+        "json-logging>=1.3.0",               # Ajoute le module pythonjsonlogger
         "joblib",                            # Pour scaler.pkl
         "pyyaml"                             # Pour lire params.yaml et configs.yaml
     ],
