@@ -53,8 +53,7 @@ jobs:
         gcloud ai custom-jobs create \
           --region=${{ secrets.VERTEX_REGION }} \
           --display-name="train-${RUN_ID}" \
-          --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
-          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=MLOPS_Crypto.train_lstm \
+          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,local-package-path=.,python-module=MLOPS_Crypto.train_lstm \
           --args=--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data \
           --args=--pair=BTC_USDT \
           --args=--run_id=$RUN_ID
@@ -95,4 +94,3 @@ jobs:
       with:
         name: evaluation-plots
         path: evaluation/
-
