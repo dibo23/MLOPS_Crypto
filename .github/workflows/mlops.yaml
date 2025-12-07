@@ -10,11 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) Checkout
+    # 1) Checkout du repo
     - name: Checkout
       uses: actions/checkout@v4
 
-    # 2) Auth GCP
+    # 2) Authentification Google Cloud
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
       with:
@@ -25,28 +25,26 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 3) Generate RUN_ID once
-    - name: Generate RUN_ID
-      run: |
-        RUN_ID=$(date +%s)
-        echo "$RUN_ID" > run_id.txt
-        echo "RUN_ID=$RUN_ID"
-
-    # 4) Build package
+    # 3) Build du package Python pour Vertex
     - name: Build Python package for Vertex
       run: tar -czf src.tar.gz src setup.py
 
-    # 5) Upload package to GCS
+    # 4) Upload du package vers GCS
     - name: Upload package to GCS
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
-    # 6) Fetch & prepare dataset (uses SAME RUN_ID)
+    # 5) Installation des dépendances nécessaires au fetch
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    # 6) Génération dataset local + upload (RUN_ID créé ici)
     - name: Fetch & prepare dataset
       run: |
-        RUN_ID=$(cat run_id.txt)
+        RUN_ID=$(date +%s)
+        echo "$RUN_ID" > run_id.txt
         python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC_USDT
 
-    # 7) Launch Vertex AI training job WITH SAME RUN_ID
+    # 7) Lancement du job Vertex AI avec le même RUN_ID
     - name: Launch Vertex AI Job
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -61,7 +59,7 @@ jobs:
           --args=--pair=BTC_USDT \
           --args=--run_id=$RUN_ID
 
-    # 8) Wait for Vertex AI
+    # 8) Attendre que Vertex AI finisse
     - name: Wait for Vertex AI Training Job
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -77,11 +75,11 @@ jobs:
         gcloud ai custom-jobs stream-logs $JOB_ID \
           --region=${{ secrets.VERTEX_REGION }}
 
-    # 9) Install deps for local visualization
+    # 9) Installer deps localement pour visualisation
     - name: Install local dependencies
       run: pip install -r requirements.txt
 
-    # 10) Visualize trained model
+    # 10) Visualisation locale du modèle entraîné
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -91,10 +89,10 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 11) Upload results
+    # 11) Upload des graphes
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
         name: evaluation-plots
         path: evaluation/
-        
+
