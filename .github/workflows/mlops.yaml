@@ -25,7 +25,7 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 3) Build du package Python pour Vertex
+    # 3) Build du package Python (tar.gz) pour Vertex
     - name: Build Python package for Vertex
       run: tar -czf src.tar.gz src setup.py
 
@@ -33,7 +33,7 @@ jobs:
     - name: Upload package to GCS
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
-    # 5) Installation des dépendances nécessaires au fetch
+    # 5) Installation dépendances locales (pour fetch uniquement)
     - name: Install dependencies
       run: pip install -r requirements.txt
 
@@ -44,7 +44,7 @@ jobs:
         echo "$RUN_ID" > run_id.txt
         python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC_USDT
 
-    # 7) Lancement du job Vertex AI avec le même RUN_ID
+    # 7) Lancement du job Vertex AI utilisant le package GCS
     - name: Launch Vertex AI Job
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -53,12 +53,13 @@ jobs:
         gcloud ai custom-jobs create \
           --region=${{ secrets.VERTEX_REGION }} \
           --display-name="train-${RUN_ID}" \
-          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,local-package-path=.,python-module=MLOPS_Crypto.train_lstm \
+          --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
+          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=MLOPS_Crypto.train_lstm \
           --args=--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data \
           --args=--pair=BTC_USDT \
           --args=--run_id=$RUN_ID
 
-    # 8) Attendre que Vertex AI finisse
+    # 8) Attendre que Vertex AI termine
     - name: Wait for Vertex AI Training Job
       run: |
         RUN_ID=$(cat run_id.txt)
