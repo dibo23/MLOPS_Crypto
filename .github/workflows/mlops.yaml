@@ -25,19 +25,31 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 3) Build package
-    - name: Build Python package for Vertex
-      run: tar -czf src.tar.gz src setup.py
-
-    # 4) Upload package to GCS
-    - name: Upload package to GCS
-      run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
-
-    # 5) Launch Vertex AI training job
-    - name: Launch Vertex AI Job
+    # 3) Generate RUN_ID once
+    - name: Generate RUN_ID
       run: |
         RUN_ID=$(date +%s)
         echo "$RUN_ID" > run_id.txt
+        echo "RUN_ID=$RUN_ID"
+
+    # 4) Build package
+    - name: Build Python package for Vertex
+      run: tar -czf src.tar.gz src setup.py
+
+    # 5) Upload package to GCS
+    - name: Upload package to GCS
+      run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
+
+    # 6) Fetch & prepare dataset (uses SAME RUN_ID)
+    - name: Fetch & prepare dataset
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC_USDT
+
+    # 7) Launch Vertex AI training job WITH SAME RUN_ID
+    - name: Launch Vertex AI Job
+      run: |
+        RUN_ID=$(cat run_id.txt)
         echo "RUN_ID=$RUN_ID"
 
         gcloud ai custom-jobs create \
@@ -49,7 +61,7 @@ jobs:
           --args=--pair=BTC_USDT \
           --args=--run_id=$RUN_ID
 
-    # 6) Wait for Vertex AI job to finish
+    # 8) Wait for Vertex AI
     - name: Wait for Vertex AI Training Job
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -65,11 +77,11 @@ jobs:
         gcloud ai custom-jobs stream-logs $JOB_ID \
           --region=${{ secrets.VERTEX_REGION }}
 
-    # 7) Install deps locally (visualization)
+    # 9) Install deps for local visualization
     - name: Install local dependencies
       run: pip install -r requirements.txt
 
-    # 8) Visualize trained model
+    # 10) Visualize trained model
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -79,9 +91,10 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 9) Upload plots
+    # 11) Upload results
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
         name: evaluation-plots
         path: evaluation/
+        
