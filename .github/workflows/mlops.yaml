@@ -48,13 +48,29 @@ jobs:
           --args=--pair=BTC_USDT \
           --args=--run_id=$RUN_ID
 
-        echo "RUN_ID=$RUN_ID" > run_id.txt
+        echo "$RUN_ID" > run_id.txt
 
-    # 6) Install deps locally for visualization
+    # 6) WAIT for Vertex AI job to finish
+    - name: Wait for Vertex AI Training Job
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        echo "Waiting for Vertex training job train-${RUN_ID}"
+
+        JOB_ID=$(gcloud ai custom-jobs list \
+          --region=${{ secrets.VERTEX_REGION }} \
+          --format="value(name)" \
+          --filter="displayName=train-${RUN_ID}")
+
+        echo "Training job ID: $JOB_ID"
+
+        gcloud ai custom-jobs stream-logs $JOB_ID \
+          --region=${{ secrets.VERTEX_REGION }}
+
+    # 7) Install deps locally (visualization)
     - name: Install local dependencies
       run: pip install -r requirements.txt
 
-    # 7) Visualize model
+    # 8) Visualize trained model
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -64,7 +80,7 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 8) Upload plots
+    # 9) Upload plots
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
