@@ -109,7 +109,9 @@ jobs:
 
         echo "Found model folder: $MODEL_PATH"
 
-        gsutil cp -r "${MODEL_PATH}*" "$MODEL_DIR/"
+        MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
+
+        gsutil cp -r "${MODEL_PATH}/*" "$MODEL_DIR/"
 
         python3 src/evaluate.py $MODEL_DIR data/prepared
 
