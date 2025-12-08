@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
     - name: Checkout
       uses: actions/checkout@v4
 
@@ -27,6 +28,7 @@ jobs:
 
     - name: Install dependencies
       run: pip install -r requirements.txt
+
 
     # 1) Télécharger dataset RAW
     - name: Prepare dataset
@@ -50,6 +52,7 @@ jobs:
         echo "Running prepare.py..."
         python3 src/prepare.py data/raw.csv data/prepared
 
+
     # 2) Télécharger modèle
     - name: Download model
       run: |
@@ -59,17 +62,24 @@ jobs:
         MODEL_DIR="local_model_${RUN_ID}"
         mkdir -p $MODEL_DIR
 
+        echo "Searching model folder in GCS..."
         MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
+
         if [ -z "$MODEL_PATH" ]; then
           echo "❌ Model folder not found for RUN_ID=$RUN_ID"
           exit 1
         fi
 
+        # Remove trailing slashes
         MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
         echo "Found model path: $MODEL_PATH"
 
-        gsutil cp -r "$MODEL_PATH" "$MODEL_DIR/"
+        echo "Downloading model content..."
+        # IMPORTANT FIX: copy ONLY the folder content, not the folder itself
+        gsutil cp -r "$MODEL_PATH"/* "$MODEL_DIR/"
 
+
+    # DEBUG — afficher ce que GitHub a téléchargé
     - name: Debug model folder
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
@@ -84,6 +94,7 @@ jobs:
         echo "Running evaluate.py..."
         python3 src/evaluate.py "local_model_${RUN_ID}" data/prepared
 
+
     # 4) Visualiser
     - name: Visualize
       run: |
@@ -94,6 +105,7 @@ jobs:
           --gcs_path ohlcv-data \
           --lookback 30 \
           --run_id "$RUN_ID"
+
 
     # 5) Upload résultats
     - name: Upload evaluation plots
