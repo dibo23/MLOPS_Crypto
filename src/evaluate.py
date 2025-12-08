@@ -198,7 +198,12 @@ def main() -> None:
 
     # Chargement du modèle 
     print("Loading Keras model (.keras)…")
-    model = tf.keras.models.load_model(model_folder / "model.keras")
+    model_path = model_folder / "model.keras"
+
+    if not model_path.exists():
+        raise FileNotFoundError(f"❌ model.keras not found in {model_folder}")
+
+    model = tf.keras.models.load_model(model_path)
 
     # Chargement de l'historique
     model_history = np.load(model_folder / "history.npy", allow_pickle=True).item()
