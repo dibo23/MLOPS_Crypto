@@ -21,7 +21,6 @@ def get_training_plot(model_history: dict) -> plt.Figure:
     ax1.grid(True)
 
     if "mean_absolute_error" in model_history:
-        # Axe pour le MAE
         ax2 = ax1.twinx()
         ax2.plot(epochs, model_history["mean_absolute_error"], label="Training MAE", color="orange")
         ax2.plot(epochs, model_history["val_mean_absolute_error"], label="Validation MAE", color="red")
@@ -30,6 +29,36 @@ def get_training_plot(model_history: dict) -> plt.Figure:
 
     plt.title("Training and validation metrics")
     plt.tight_layout()
+    return fig
+
+
+def plot_training_narrative(model_history: dict) -> plt.Figure:
+    """Graphique complet montrant entraînement, val_loss, meilleur modèle et early stopping."""
+    loss = model_history["loss"]
+    val_loss = model_history["val_loss"]
+    epochs = range(1, len(loss) + 1)
+
+    # Trouver la meilleure epoch
+    best_epoch = int(np.argmin(val_loss)) + 1
+    best_val = float(np.min(val_loss))
+
+    fig = plt.figure(figsize=(12, 6))
+    plt.plot(epochs, loss, label="Training Loss", linewidth=2)
+    plt.plot(epochs, val_loss, label="Validation Loss", linewidth=2)
+
+    # Ligne verticale = epoch du meilleur modèle
+    plt.axvline(best_epoch, color="red", linestyle="--", label=f"Best Epoch = {best_epoch}")
+
+    # Ligne horizontale = meilleure val_loss atteinte
+    plt.axhline(best_val, color="green", linestyle="--", label=f"Best Val Loss = {best_val:.4f}")
+
+    plt.title("Training Narrative: Loss, Val Loss, Early Stopping, Best Model")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
     return fig
 
 
@@ -173,6 +202,10 @@ def main() -> None:
     # Graphique 1 : courbes d'entraînement
     fig = get_training_plot(model_history)
     fig.savefig(plots_folder / "training_history.png")
+
+    # Graphique 6 : narratif complet (best model + early stopping)
+    fig = plot_training_narrative(model_history)
+    fig.savefig(plots_folder / "training_narrative.png")
 
     # Graphique 2 : vrai vs prédit
     fig, y_true, y_pred = get_pred_vs_true_plot(model, ds_test)

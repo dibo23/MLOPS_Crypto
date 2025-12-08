@@ -20,31 +20,32 @@ jobs:
       with:
         credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+    # 3) Setup gcloud
     - name: Setup gcloud
       uses: google-github-actions/setup-gcloud@v2
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 3) Build package Python (tar.gz)
+    # 4) Build package Python (tar.gz)
     - name: Build Python package for Vertex
       run: tar -czf src.tar.gz src setup.py
 
-    # 4) Upload vers GCS
+    # 5) Upload vers GCS
     - name: Upload package to GCS
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
-    # 5) Install deps localement
+    # 6) Install deps localement
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    # 6) Fetch dataset + upload
+    # 7) Fetch dataset + upload
     - name: Fetch & prepare dataset
       run: |
         RUN_ID=$(date +%s)
         echo "$RUN_ID" > run_id.txt
         python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC/USDT
 
-    # 7) Création du job Vertex + récupération job_id
+    # 8) Création du job Vertex + récupération job_id
     - name: Launch Vertex AI Job
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -63,7 +64,7 @@ jobs:
         echo "$JOB_ID" > job_id.txt
         echo "Launched job: $JOB_ID"
 
-    # 8) Attente FIXE 18 minutes (hyper stable, zéro blocage)
+    # 9) Attente FIXE 18 minutes (hyper stable, zéro blocage)
     - name: Wait for Vertex AI Training Job
       run: |
         echo "Waiting 18 minutes to let Vertex finish training..."
@@ -73,11 +74,25 @@ jobs:
         done
         echo "Done waiting. Continuing pipeline."
 
-    # 9) Install deps local pour visualisation
-    - name: Install local dependencies
+    # 10) Install deps local pour évaluation
+    - name: Install local dependencies (evaluate)
       run: pip install -r requirements.txt
 
-    # 10) Visualisation du modèle
+    # 11) Évaluation du modèle (plots hyperparams, courbes loss, etc.)
+    - name: Evaluate trained model
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        MODEL_DIR="local_model_${RUN_ID}"
+
+        mkdir -p $MODEL_DIR
+
+        # Téléchargement des artefacts entraînés
+        gsutil cp -r gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/BTC_USDT_${RUN_ID}/* $MODEL_DIR/
+
+        # Lancement de evaluate.py
+        python3 src/evaluate.py $MODEL_DIR data/prepared
+
+    # 12) Visualisation du modèle
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -87,7 +102,7 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 11) Upload graphes
+    # 13) Upload graphes (evaluation + visualize)
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:

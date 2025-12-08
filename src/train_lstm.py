@@ -126,8 +126,8 @@ def evaluate_all_configs(df, configs, max_epochs, patience_factor):
         model, hist, final_val = train_one_config(
             df,
             cfg,
-            epochs=max_epochs,
-            patience_factor=patience_factor
+            max_epochs,
+            patience_factor
         )
 
         candidates.append({
@@ -139,7 +139,6 @@ def evaluate_all_configs(df, configs, max_epochs, patience_factor):
 
     candidates.sort(key=lambda c: c["final_val_loss"])
     return candidates
-
 
 # Chargement dataset
 train_path = f"{BASE_PATH}/{PAIR}_train_{RUN_ID}.parquet"
@@ -182,8 +181,8 @@ patience_factor = config_yaml.get("patience_factor", 1.2)
 all_candidates = evaluate_all_configs(
     df,
     configs_to_test,
-    max_epochs=max_epochs,
-    patience_factor=patience_factor
+    max_epochs,
+    patience_factor
 )
 
 best = all_candidates[0]
@@ -195,20 +194,16 @@ timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
 model_dir = f"{BASE_PATH}/models/{PAIR}_{RUN_ID}_{timestamp}"
 bucket = storage_client.bucket(BUCKET)
 
-# Sauvegarde modèle
+# Sauvegarde modèle SavedModel ZIP
 local_model_dir = f"saved_model_{PAIR}"
 model.save(local_model_dir, save_format="tensorflow")
 
-# Upload du dossier SavedModel sous forme ZIP
-import shutil, os
+import shutil
 
-# Création du ZIP (et on récupère le chemin retourné)
 zip_path = shutil.make_archive(local_model_dir, 'zip', local_model_dir)
 
-# Upload vers GCS
 bucket.blob(f"{model_dir}/{local_model_dir}.zip").upload_from_filename(zip_path)
 
-# Nettoyage local (IMPORTANT)
 shutil.rmtree(local_model_dir)
 os.remove(zip_path)
 
@@ -243,5 +238,16 @@ with open("all_candidates.json", "w") as f:
     json.dump(all_candidates, f, indent=2)
 
 bucket.blob(f"{model_dir}/all_candidates.json").upload_from_filename("all_candidates.json")
+
+# Save model.keras for evaluate.py
+keras_path = "model.keras"
+model.save(keras_path)
+bucket.blob(f"{model_dir}/model.keras").upload_from_filename(keras_path)
+os.remove(keras_path)
+
+# Save training history for evaluate.py
+np.save("history.npy", history)
+bucket.blob(f"{model_dir}/history.npy").upload_from_filename("history.npy")
+os.remove("history.npy")
 
 print("Training completed successfully.")

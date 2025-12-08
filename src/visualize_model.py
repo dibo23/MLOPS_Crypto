@@ -130,7 +130,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--gcs_path", required=True)
-    parser.add_argument("--lookback", type=int, required=True)
     parser.add_argument("--run_id", required=False)
     args = parser.parse_args()
 
@@ -138,6 +137,15 @@ def main():
     model, df, scaler, model_folder = load_artifacts_gcs(
         args.bucket, args.gcs_path, run_id=args.run_id
     )
+
+    # AUTO-DETECTION DU LOOKBACK ET NB FEATURES
+    sig = model.signatures["serving_default"]
+    input_dict = sig.structured_input_signature[1]
+    input_key = list(input_dict.keys())[0]
+    input_shape = input_dict[input_key].shape
+
+    lookback = input_shape[1]
+    n_features = input_shape[2]
 
     run_id = os.path.basename(model_folder)
     out_dir = os.path.join("evaluation", "plots_gcs", run_id)
@@ -149,8 +157,8 @@ def main():
         df = df.set_index("timestamp")
 
     # Construction des séquences
-    X, y = create_sequences(df, args.lookback)
-    preds = model({"inputs": X}).numpy().reshape(-1)
+    X, y = create_sequences(df, lookback)
+    preds = model(X).numpy().reshape(-1)
 
     # Métriques normalisées
     mae = float(np.mean(np.abs(preds - y)))
@@ -159,13 +167,13 @@ def main():
 
     # Dénormalisation
     features_full = df[["open", "high", "low", "close", "volume"]].values
-    real_full = features_full[args.lookback:]
+    real_full = features_full[lookback:]
     pred_full = real_full.copy()
     pred_full[:, 3] = preds
 
     real_prices = scaler.inverse_transform(real_full)[:, 3]
     pred_prices = scaler.inverse_transform(pred_full)[:, 3]
-    dates = df.index[args.lookback:]
+    dates = df.index[lookback:]
 
     mape = float(np.mean(np.abs((real_prices - pred_prices) / real_prices)) * 100)
 
@@ -179,8 +187,8 @@ def main():
         }, f, indent=4)
 
     # Prédiction t+1
-    last_seq = features_full[-args.lookback:].reshape(1, args.lookback, 5)
-    future_pred_norm = float(model({"inputs": last_seq}).numpy()[0][0])
+    last_seq = features_full[-lookback:].reshape(1, lookback, n_features)
+    future_pred_norm = float(model(last_seq).numpy()[0][0])
 
     future_point = real_full[-1:].copy()
     future_point[:, 3] = future_pred_norm
@@ -218,7 +226,6 @@ def main():
     plt.savefig(os.path.join(out_dir, "preds_usd.png"))
     plt.close()
 
-    # Zoom 200 derniers points
     zoom = 200
     plt.figure(figsize=(16, 6))
     plt.plot(dates[-zoom:], real_prices[-zoom:], label="Real")
@@ -234,7 +241,7 @@ def main():
 
     plt.xticks(rotation=45)
     plt.title("Zoom last 200 points")
-    plt.tight_layout()
+    plt.tight_
     plt.savefig(os.path.join(out_dir, "preds_usd_zoom_200.png"))
     plt.close()
 
