@@ -83,13 +83,22 @@ jobs:
       run: |
         RUN_ID=$(cat run_id.txt)
         MODEL_DIR="local_model_${RUN_ID}"
-
         mkdir -p $MODEL_DIR
 
-        # Téléchargement des artefacts entraînés
-        gsutil cp -r gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/BTC_USDT_${RUN_ID}/* $MODEL_DIR/
+        # Recherche dynamique du dossier modèle avec timestamp
+        MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
 
-        # Lancement de evaluate.py
+        if [ -z "$MODEL_PATH" ]; then
+          echo "Model folder not found in GCS!"
+          exit 1
+        fi
+
+        echo "Found model folder: $MODEL_PATH"
+
+        # Téléchargement des artefacts depuis GCS
+        gsutil cp -r ${MODEL_PATH}/* $MODEL_DIR/
+
+        # Lancement de l’évaluation
         python3 src/evaluate.py $MODEL_DIR data/prepared
 
     # 12) Visualisation du modèle
