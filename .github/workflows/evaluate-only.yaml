@@ -29,7 +29,6 @@ jobs:
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-
     # 1) Télécharger dataset RAW
     - name: Prepare dataset
       run: |
@@ -52,7 +51,6 @@ jobs:
         echo "Running prepare.py..."
         python3 src/prepare.py data/raw.csv data/prepared
 
-
     # 2) Télécharger modèle
     - name: Download model
       run: |
@@ -70,42 +68,35 @@ jobs:
           exit 1
         fi
 
-        # Remove trailing slashes
         MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
         echo "Found model path: $MODEL_PATH"
 
         echo "Downloading model content..."
-        # IMPORTANT FIX: copy ONLY the folder content, not the folder itself
         gsutil cp -r "$MODEL_PATH"/* "$MODEL_DIR/"
 
-
-    # DEBUG — afficher ce que GitHub a téléchargé
+    # DEBUG
     - name: Debug model folder
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         echo "Listing downloaded model folder:"
         ls -R "local_model_${RUN_ID}"
 
-
-    # 3) Évaluer le modèle
+    # 3) Évaluer
     - name: Evaluate
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         echo "Running evaluate.py..."
-        python3 src/evaluate.py local_model_${RUN_ID} data/prepared
+        python3 src/evaluate.py "local_model_${RUN_ID}" data/prepared
 
-
-    # 4) Visualiser
+    # 4) Visualiser depuis GCS
     - name: Visualize
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         echo "Running visualize_model.py..."
         python3 src/visualize_model.py \
-          --bucket ${{ secrets.GCS_BUCKET }} \
-          --gcs_path ohlcv-data \
-          --lookback 30 \
+          --bucket "${{ secrets.GCS_BUCKET }}" \
+          --gcs_path "ohlcv-data" \
           --run_id "$RUN_ID"
-
 
     # 5) Upload résultats
     - name: Upload evaluation plots
