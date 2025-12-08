@@ -36,32 +36,17 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
     tmp_file = os.path.join(tmp_dir, os.path.basename(blob_name))
     blob.download_to_filename(tmp_file)
 
-    # Cas direct : .h5 ou .keras
     if blob_name.endswith(".h5") or blob_name.endswith(".keras"):
-        print("Loading model (.h5 / .keras)")
         return tf.keras.models.load_model(tmp_file)
 
-    # Cas ZIP SavedModel
-    try:
+    if blob_name.endswith(".zip"):
+        extract_dir = os.path.join(tmp_dir, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
         with zipfile.ZipFile(tmp_file, "r") as z:
-            print("Extracting ZIP SavedModel")
-
-            # NOUVEAU : extraction propre dans un sous-dossier
-            extract_dir = os.path.join(tmp_dir, "extracted")
-            os.makedirs(extract_dir, exist_ok=True)
-
             z.extractall(extract_dir)
-            return tf.keras.models.load_model(extract_dir)
+        return tf.keras.layers.TFSMLayer(extract_dir, call_endpoint="serving_default")
 
-    except zipfile.BadZipFile:
-        pass
-
-    # Cas dossier SavedModel téléchargé
-    try:
-        print("Trying SavedModel directory")
-        return tf.keras.models.load_model(tmp_dir)
-    except Exception as e:
-        raise RuntimeError(f"Impossible de charger le modèle : {e}")
+    raise ValueError("Unsupported model format.")
 
 # Recherche du dossier modèle (avec RUN_ID facultatif)
 def get_model_folder(bucket_name, base_path, run_id=None):
@@ -79,12 +64,10 @@ def get_model_folder(bucket_name, base_path, run_id=None):
 
     folders = sorted(folders)
 
-    # Mode automatique = dernier modèle
     if run_id is None:
         print("Latest model folder:", folders[-1].rstrip("/"))
         return folders[-1].rstrip("/")
 
-    # Mode ciblé par RUN_ID
     for f in folders:
         if run_id in f:
             print("Selected model folder:", f.rstrip("/"))
@@ -99,19 +82,16 @@ def find_model_file(bucket_name, model_folder):
 
     blobs = list(bucket.list_blobs(prefix=model_folder + "/"))
 
-    # Priorité au .h5 (format stable Keras 3)
     h5_files = [b.name for b in blobs if b.name.endswith(".h5")]
     if h5_files:
         print("Detected H5 model file:", h5_files[0])
         return h5_files[0]
 
-    # Sinon .keras
     keras_files = [b.name for b in blobs if b.name.endswith(".keras")]
     if keras_files:
         print("Detected .keras model file:", keras_files[0])
         return keras_files[0]
 
-    # Sinon ZIP SavedModel
     zip_files = [b.name for b in blobs if b.name.endswith(".zip")]
     if zip_files:
         print("Detected ZIP SavedModel:", zip_files[0])
@@ -170,7 +150,7 @@ def main():
 
     # Construction des séquences
     X, y = create_sequences(df, args.lookback)
-    preds = model.predict(X).reshape(-1)
+    preds = model({"inputs": X}).numpy().reshape(-1)
 
     # Métriques normalisées
     mae = float(np.mean(np.abs(preds - y)))
@@ -200,7 +180,7 @@ def main():
 
     # Prédiction t+1
     last_seq = features_full[-args.lookback:].reshape(1, args.lookback, 5)
-    future_pred_norm = float(model.predict(last_seq)[0][0])
+    future_pred_norm = float(model({"inputs": last_seq}).numpy()[0][0])
 
     future_point = real_full[-1:].copy()
     future_point[:, 3] = future_pred_norm
