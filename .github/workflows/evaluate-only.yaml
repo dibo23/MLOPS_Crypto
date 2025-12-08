@@ -68,7 +68,7 @@ jobs:
         MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
         echo "Found model path: $MODEL_PATH"
 
-        gsutil cp -r ${MODEL_PATH}* $MODEL_DIR/
+        gsutil cp -r "$MODEL_PATH" "$MODEL_DIR/"
 
     # 3) Évaluer le modèle
     - name: Evaluate
