@@ -48,7 +48,7 @@ def load_dataset_from_csv(csv_path: Path, test_split: float, seed: int):
     if not numeric_cols:
         raise ValueError("Aucune colonne numérique détectée dans le CSV !")
 
-    print(f"\n✅ Colonnes utilisées pour l'entraînement : {numeric_cols}")
+    print(f"\n Colonnes utilisées pour l'entraînement : {numeric_cols}")
 
     # Données features (X) et cible (y)
     X = df[numeric_cols].values.astype("float32")
@@ -76,7 +76,9 @@ def main() -> None:
         exit(1)
 
     # Chargement des paramètres
-    prepare_params = yaml.safe_load(open("params.yaml"))["prepare"]
+    ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PARAMS_PATH = os.path.join(ROOT_DIR, "../params.yaml")
+    prepare_params = yaml.safe_load(open(PARAMS_PATH))["prepare"]
 
     csv_path = Path(sys.argv[1])
     prepared_dataset_folder = Path(sys.argv[2])
@@ -116,7 +118,7 @@ def main() -> None:
     with open(prepared_dataset_folder / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
-    print(f"\n✅ Données préparées et sauvegardées dans {prepared_dataset_folder.absolute()}")
+    print(f"\n Données préparées et sauvegardées dans {prepared_dataset_folder.absolute()}")
 
 
 if __name__ == "__main__":
