@@ -239,9 +239,9 @@ with open("all_candidates.json", "w") as f:
 
 bucket.blob(f"{model_dir}/all_candidates.json").upload_from_filename("all_candidates.json")
 
-# Save model.keras for evaluate.py
+# Save model.keras for evaluate.py (Keras 3 requires explicit format)
 keras_path = "model.keras"
-model.save(keras_path)
+model.save(keras_path, save_format="keras")
 bucket.blob(f"{model_dir}/model.keras").upload_from_filename(keras_path)
 os.remove(keras_path)
 
