@@ -196,14 +196,20 @@ def main() -> None:
         fig = plot_all_tested_configs(all_candidates)
         fig.savefig(plots_folder / "all_hyperparams.png")
 
-    # Chargement du modèle 
-    print("Loading Keras model (.keras)…")
-    model_path = model_folder / "model.keras"
+    # Chargement du modèle (on ignore le faux model.keras — il n'est pas un vrai .keras v3)
+    print("Loading SavedModel ZIP using TFSMLayer…")
 
-    if not model_path.exists():
-        raise FileNotFoundError(f"❌ model.keras not found in {model_folder}")
+    savedmodel_zip = model_folder / "saved_model_BTC_USDT.zip"
+    if not savedmodel_zip.exists():
+        raise FileNotFoundError(f"SavedModel ZIP not found: {savedmodel_zip}")
 
-    model = tf.keras.models.load_model(model_path)
+    tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
+
+    with zipfile.ZipFile(savedmodel_zip, "r") as z:
+        z.extractall(tmpdir)
+
+    # Keras 3 → impossible de charger SavedModel avec load_model()
+    model = tf.keras.layers.TFSMLayer(tmpdir, call_endpoint="serving_default")
 
     # Chargement de l'historique
     model_history = np.load(model_folder / "history.npy", allow_pickle=True).item()
