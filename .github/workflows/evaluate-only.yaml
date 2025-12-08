@@ -1,0 +1,57 @@
+name: Evaluate Only
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  evaluate-only:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Auth Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Setup gcloud
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: Install deps
+      run: pip install -r requirements.txt
+
+    - name: Download latest RUN_ID
+      run: echo "Use last run_id.txt or enter manually"
+
+    - name: Prepare dataset
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        mkdir -p data
+        gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
+        python3 -c "import pandas as pd; df=pd.read_parquet('data/raw.parquet'); df.to_csv('data/raw.csv', index=False)"
+        python3 src/prepare.py data/raw.csv data/prepared
+
+    - name: Download model
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep ${RUN_ID})
+        mkdir -p local_model
+        gsutil cp -r ${MODEL_PATH}/* local_model/
+
+    - name: Evaluate
+      run: python3 src/evaluate.py local_model data/prepared
+
+    - name: Visualize
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        python3 src/visualize_model.py \
+          --bucket ${{ secrets.GCS_BUCKET }} \
+          --gcs_path ohlcv-data \
+          --run_id $RUN_ID
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: evaluation-plots
+        path: evaluation/
