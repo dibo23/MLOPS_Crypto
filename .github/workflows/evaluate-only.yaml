@@ -92,7 +92,7 @@ jobs:
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         echo "Running evaluate.py..."
-        python3 src/evaluate.py "local_model_${RUN_ID}" data/prepared
+        python3 src/evaluate.py local_model_${RUN_ID} data/prepared
 
 
     # 4) Visualiser
