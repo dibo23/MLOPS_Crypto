@@ -196,13 +196,9 @@ def main() -> None:
         fig = plot_all_tested_configs(all_candidates)
         fig.savefig(plots_folder / "all_hyperparams.png")
 
-    # Chargement du modèle — version CORRIGÉE : utilise SavedModel ZIP
-    savedmodel_zip = model_folder / "saved_model_BTC_USDT.zip"
-    if not savedmodel_zip.exists():
-        raise FileNotFoundError(f"SavedModel ZIP not found: {savedmodel_zip}")
-
-    print("Loading SavedModel ZIP…")
-    model = load_savedmodel_from_zip(savedmodel_zip)
+    # Chargement du modèle 
+    print("Loading Keras model (.keras)…")
+    model = tf.keras.models.load_model(model_folder / "model.keras")
 
     # Chargement de l'historique
     model_history = np.load(model_folder / "history.npy", allow_pickle=True).item()
