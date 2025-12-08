@@ -1,13 +1,19 @@
 name: Evaluate Only
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "RUN_ID du modèle à évaluer"
+        required: true
 
 jobs:
   evaluate-only:
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
     - name: Auth Google Cloud
       uses: google-github-actions/auth@v2
@@ -19,39 +25,72 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    - name: Install deps
+    - name: Install dependencies
       run: pip install -r requirements.txt
 
-    - name: Download latest RUN_ID
-      run: echo "Use last run_id.txt or enter manually"
-
+    # 1) Télécharger dataset RAW
     - name: Prepare dataset
       run: |
-        RUN_ID=$(cat run_id.txt)
+        RUN_ID="${{ github.event.inputs.run_id }}"
+        echo "Evaluating RUN_ID=$RUN_ID"
+
         mkdir -p data
+        mkdir -p data/prepared
+
+        echo "Downloading RAW parquet..."
         gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
-        python3 -c "import pandas as pd; df=pd.read_parquet('data/raw.parquet'); df.to_csv('data/raw.csv', index=False)"
+
+        echo "Converting parquet -> CSV..."
+        python3 - <<EOF
+        import pandas as pd
+        df = pd.read_parquet("data/raw.parquet")
+        df.to_csv("data/raw.csv", index=False)
+        EOF
+
+        echo "Running prepare.py..."
         python3 src/prepare.py data/raw.csv data/prepared
 
+    # 2) Télécharger modèle
     - name: Download model
       run: |
-        RUN_ID=$(cat run_id.txt)
-        MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep ${RUN_ID})
-        mkdir -p local_model
-        gsutil cp -r ${MODEL_PATH}/* local_model/
+        RUN_ID="${{ github.event.inputs.run_id }}"
+        echo "Downloading model for RUN_ID=$RUN_ID"
 
+        MODEL_DIR="local_model_${RUN_ID}"
+        mkdir -p $MODEL_DIR
+
+        MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
+        if [ -z "$MODEL_PATH" ]; then
+          echo "❌ Model folder not found for RUN_ID=$RUN_ID"
+          exit 1
+        fi
+
+        MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
+        echo "Found model path: $MODEL_PATH"
+
+        gsutil cp -r "${MODEL_PATH}/*" "$MODEL_DIR/"
+
+    # 3) Évaluer le modèle
     - name: Evaluate
-      run: python3 src/evaluate.py local_model data/prepared
+      run: |
+        RUN_ID="${{ github.event.inputs.run_id }}"
+        echo "Running evaluate.py..."
+        python3 src/evaluate.py "local_model_${RUN_ID}" data/prepared
 
+    # 4) Visualiser
     - name: Visualize
       run: |
-        RUN_ID=$(cat run_id.txt)
+        RUN_ID="${{ github.event.inputs.run_id }}"
+        echo "Running visualize_model.py..."
         python3 src/visualize_model.py \
           --bucket ${{ secrets.GCS_BUCKET }} \
           --gcs_path ohlcv-data \
-          --run_id $RUN_ID
+          --lookback 30 \
+          --run_id "$RUN_ID"
 
-    - uses: actions/upload-artifact@v4
+    # 5) Upload résultats
+    - name: Upload evaluation plots
+      uses: actions/upload-artifact@v4
       with:
         name: evaluation-plots
         path: evaluation/
