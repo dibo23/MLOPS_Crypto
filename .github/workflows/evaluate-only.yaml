@@ -41,7 +41,7 @@ jobs:
         gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
 
         echo "Converting parquet -> CSV..."
-        python3 - <<EOF
+        python3 <<EOF
         import pandas as pd
         df = pd.read_parquet("data/raw.parquet")
         df.to_csv("data/raw.csv", index=False)
@@ -68,7 +68,7 @@ jobs:
         MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
         echo "Found model path: $MODEL_PATH"
 
-        gsutil cp -r "${MODEL_PATH}/*" "$MODEL_DIR/"
+        gsutil cp -r ${MODEL_PATH}* $MODEL_DIR/
 
     # 3) Évaluer le modèle
     - name: Evaluate
