@@ -14,7 +14,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # 2) Authentification Google Cloud
+    # 2) Auth Google Cloud
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
       with:
@@ -25,68 +25,66 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 3) Build du package Python (tar.gz) pour Vertex
+    # 3) Build package Python (tar.gz)
     - name: Build Python package for Vertex
       run: tar -czf src.tar.gz src setup.py
 
-    # 4) Upload du package vers GCS
+    # 4) Upload vers GCS
     - name: Upload package to GCS
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
-    # 5) Installation dépendances locales
+    # 5) Install deps localement (ccxt, pandas, yaml…)
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    # 6) Génération dataset local + upload
+    # 6) Fetch dataset + upload (RUN_ID généré ici)
     - name: Fetch & prepare dataset
       run: |
         RUN_ID=$(date +%s)
         echo "$RUN_ID" > run_id.txt
         python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC/USDT
 
-    # 7) Lancement job Vertex
+    # 7) Création du job Vertex ET récupération du job_id réel
     - name: Launch Vertex AI Job
       run: |
         RUN_ID=$(cat run_id.txt)
         echo "RUN_ID=$RUN_ID"
 
-        gcloud ai custom-jobs create \
+        JOB_ID=$(gcloud ai custom-jobs create \
           --region=${{ secrets.VERTEX_REGION }} \
           --display-name="train-${RUN_ID}" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
           --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=MLOPS_Crypto.train_lstm \
           --args=--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data \
           --args=--pair=BTC_USDT \
-          --args=--run_id=$RUN_ID
+          --args=--run_id=$RUN_ID \
+          --format="value(name)" )
 
-    # 8) Attendre la fin réelle du job vertex (fix critique)
+        echo "$JOB_ID" > job_id.txt
+        echo "Launched job: $JOB_ID"
+
+    # 8) Attendre la fin réelle du job Vertex (vrai poll)
     - name: Wait for Vertex AI Training Job
       run: |
-        RUN_ID=$(cat run_id.txt)
-        echo "Waiting for Vertex training job train-${RUN_ID}"
+        JOB_ID=$(cat job_id.txt)
+        echo "Streaming logs for job: $JOB_ID"
 
-        JOB_ID=$(gcloud ai custom-jobs list \
-          --region=${{ secrets.VERTEX_REGION }} \
-          --format="value(name)" \
-          --filter="displayName=train-${RUN_ID}")
-
-        echo "Training job ID: $JOB_ID"
-        echo "Streaming logs..."
-        gcloud ai custom-jobs stream-logs $JOB_ID --region=${{ secrets.VERTEX_REGION }}
+        gcloud ai custom-jobs stream-logs $JOB_ID \
+          --region=${{ secrets.VERTEX_REGION }}
 
         echo "Checking final job status..."
         while true; do
           STATUS=$(gcloud ai custom-jobs describe $JOB_ID \
             --region=${{ secrets.VERTEX_REGION }} \
-            --format="value(state)")
+            --format="value(state)" )
           
           echo "STATUS = $STATUS"
-          
+
           if [[ "$STATUS" == "JOB_STATE_SUCCEEDED" ]]; then
             echo "Training completed!"
             break
           fi
-          
+
           if [[ "$STATUS" == "JOB_STATE_FAILED" || "$STATUS" == "JOB_STATE_CANCELLED" ]]; then
             echo "Training failed!"
             exit 1
@@ -96,11 +94,11 @@ jobs:
           sleep 15
         done
 
-    # 9) Installer deps localement pour visualisation
+    # 9) Install deps local pour visualisation
     - name: Install local dependencies
       run: pip install -r requirements.txt
 
-    # 10) Visualisation locale du modèle entraîné
+    # 10) Visualisation du modèle entraîné
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -110,7 +108,7 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 11) Upload des graphes
+    # 11) Upload des graphes en artefacts GitHub
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
