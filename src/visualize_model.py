@@ -45,8 +45,14 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
     try:
         with zipfile.ZipFile(tmp_file, "r") as z:
             print("Extracting ZIP SavedModel")
-            z.extractall(tmp_dir)
-            return tf.keras.models.load_model(tmp_dir)
+
+            # NOUVEAU : extraction propre dans un sous-dossier
+            extract_dir = os.path.join(tmp_dir, "extracted")
+            os.makedirs(extract_dir, exist_ok=True)
+
+            z.extractall(extract_dir)
+            return tf.keras.models.load_model(extract_dir)
+
     except zipfile.BadZipFile:
         pass
 

@@ -200,20 +200,29 @@ local_model_dir = f"saved_model_{PAIR}"
 model.save(local_model_dir, save_format="tensorflow")
 
 # Upload du dossier SavedModel sous forme ZIP
-import shutil
-shutil.make_archive(local_model_dir, 'zip', local_model_dir)
+import shutil, os
 
-bucket.blob(f"{model_dir}/{local_model_dir}.zip").upload_from_filename(f"{local_model_dir}.zip")
+# Création du ZIP (et on récupère le chemin retourné)
+zip_path = shutil.make_archive(local_model_dir, 'zip', local_model_dir)
+
+# Upload vers GCS
+bucket.blob(f"{model_dir}/{local_model_dir}.zip").upload_from_filename(zip_path)
+
+# Nettoyage local (IMPORTANT)
+shutil.rmtree(local_model_dir)
+os.remove(zip_path)
 
 # Sauvegarde scaler
 scaler_local_path = "scaler.pkl"
 joblib.dump(scaler, scaler_local_path)
 bucket.blob(f"{model_dir}/scaler.pkl").upload_from_filename(scaler_local_path)
+os.remove(scaler_local_path)
 
 # Sauvegarde dataset utilisé
 train_local_path = "train_data.parquet"
 df.to_parquet(train_local_path)
 bucket.blob(f"{model_dir}/train_data.parquet").upload_from_filename(train_local_path)
+os.remove(train_local_path)
 
 # Sauvegarde metrics
 metrics = {
