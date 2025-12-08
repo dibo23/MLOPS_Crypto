@@ -1,0 +1,64 @@
+name: Visualize Only
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  visualize-only:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1) Checkout du repo
+    - uses: actions/checkout@v4
+
+    # 2) Authentification GCP
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    # 3) Setup gcloud
+    - name: Setup gcloud
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    # 4) Installer dépendances
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    # 5) Télécharger le modèle GCS
+    - name: Download model artifacts
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        echo "Using RUN_ID=$RUN_ID"
+
+        MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
+        if [ -z "$MODEL_PATH" ]; then
+          echo "ERROR: Model folder not found for RUN_ID=$RUN_ID"
+          exit 1
+        fi
+
+        echo "Model found: $MODEL_PATH"
+
+        mkdir -p local_model
+        MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
+
+        gsutil cp -r "${MODEL_PATH}/*" local_model/
+
+    # 6) Visualisation du modèle
+    - name: Run visualize_model.py
+      run: |
+        RUN_ID=$(cat run_id.txt)
+
+        python3 src/visualize_model.py \
+            --bucket ${{ secrets.GCS_BUCKET }} \
+            --gcs_path ohlcv-data \
+            --run_id $RUN_ID
+
+    # 7) Upload résultats
+    - name: Upload visualization artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: visualize-plots
+        path: evaluation/
