@@ -72,7 +72,7 @@ jobs:
         echo "Found model path: $MODEL_PATH"
 
         echo "Downloading model content..."
-        gsutil cp -r "$MODEL_PATH"/* "$MODEL_DIR/"
+        gsutil -m cp -r "$MODEL_PATH/**" "$MODEL_DIR/"
 
     # DEBUG
     - name: Debug model folder

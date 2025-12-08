@@ -161,16 +161,6 @@ def plot_all_tested_configs(all_candidates):
     return fig
 
 
-def load_savedmodel_from_zip(model_zip_path: Path) -> tf.keras.Model:
-    """Dézippe automatiquement le SavedModel et le charge avec TensorFlow."""
-    tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
-
-    with zipfile.ZipFile(model_zip_path, "r") as z:
-        z.extractall(tmpdir)
-
-    return tf.keras.models.load_model(tmpdir)
-
-
 def main() -> None:
     if len(sys.argv) != 3:
         print("Arguments error. Usage:")
@@ -196,7 +186,7 @@ def main() -> None:
         fig = plot_all_tested_configs(all_candidates)
         fig.savefig(plots_folder / "all_hyperparams.png")
 
-    # Chargement du modèle (on ignore le faux model.keras — il n'est pas un vrai .keras v3)
+    # Chargement du modèle SavedModel ZIP
     print("Loading SavedModel ZIP using TFSMLayer…")
 
     savedmodel_zip = model_folder / "saved_model_BTC_USDT.zip"
@@ -208,11 +198,15 @@ def main() -> None:
     with zipfile.ZipFile(savedmodel_zip, "r") as z:
         z.extractall(tmpdir)
 
-    # Keras 3 → impossible de charger SavedModel avec load_model()
     model = tf.keras.layers.TFSMLayer(tmpdir, call_endpoint="serving_default")
 
-    # Chargement de l'historique
-    model_history = np.load(model_folder / "history.npy", allow_pickle=True).item()
+    # Chargement de l'historique (list → dict conversion)
+    raw_history = np.load(model_folder / "history.npy", allow_pickle=True)
+
+    model_history = {
+        "loss": [0] * len(raw_history),  # pas de loss → placeholder
+        "val_loss": [h["val_loss"] for h in raw_history]
+    }
 
     # Évaluation brute
     loss, mae = model.evaluate(ds_test, verbose=0)
