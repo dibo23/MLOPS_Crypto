@@ -26,11 +26,11 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 4) Build package Python (tar.gz)
+    # 4) Build Python package for Vertex
     - name: Build Python package for Vertex
       run: tar -czf src.tar.gz src setup.py
 
-    # 5) Upload vers GCS
+    # 5) Upload package to GCS
     - name: Upload package to GCS
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
@@ -64,7 +64,7 @@ jobs:
         echo "$JOB_ID" > job_id.txt
         echo "Launched job: $JOB_ID"
 
-    # 9) Attente FIXE 18 minutes (hyper stable, zéro blocage)
+    # 9) Attente FIXE 18 minutes
     - name: Wait for Vertex AI Training Job
       run: |
         echo "Waiting 18 minutes to let Vertex finish training..."
@@ -78,14 +78,13 @@ jobs:
     - name: Install local dependencies (evaluate)
       run: pip install -r requirements.txt
 
-    # 11) Évaluation du modèle (plots hyperparams, courbes loss, etc.)
+    # 11) Évaluation du modèle
     - name: Evaluate trained model
       run: |
         RUN_ID=$(cat run_id.txt)
         MODEL_DIR="local_model_${RUN_ID}"
         mkdir -p $MODEL_DIR
 
-        # Recherche dynamique du dossier modèle avec timestamp
         MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
 
         if [ -z "$MODEL_PATH" ]; then
@@ -95,10 +94,10 @@ jobs:
 
         echo "Found model folder: $MODEL_PATH"
 
-        # Téléchargement des artefacts depuis GCS
-        gsutil cp -r ${MODEL_PATH}/* $MODEL_DIR/
+        MODEL_PATH_CLEAN=${MODEL_PATH%/}
 
-        # Lancement de l’évaluation
+        gsutil cp -r ${MODEL_PATH_CLEAN}/* $MODEL_DIR/
+
         python3 src/evaluate.py $MODEL_DIR data/prepared
 
     # 12) Visualisation du modèle
