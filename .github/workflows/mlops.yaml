@@ -26,11 +26,11 @@ jobs:
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 4) Build Python package for Vertex
+    # 4) Build package Python (tar.gz)
     - name: Build Python package for Vertex
       run: tar -czf src.tar.gz src setup.py
 
-    # 5) Upload package to GCS
+    # 5) Upload vers GCS
     - name: Upload package to GCS
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
@@ -78,15 +78,22 @@ jobs:
     - name: Install local dependencies (evaluate)
       run: pip install -r requirements.txt
 
-    # 11) Évaluation du modèle
+    # 10.5) Préparer dataset local pour evaluate.py
+    - name: Prepare dataset for evaluate.py
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        mkdir -p data/prepared
+        python3 src/prepare.py data/BTC_USDT_${RUN_ID}_raw.csv data/prepared
+
+    # 11) Évaluation du modèle (plots hyperparams, courbes loss, etc.)
     - name: Evaluate trained model
       run: |
         RUN_ID=$(cat run_id.txt)
         MODEL_DIR="local_model_${RUN_ID}"
         mkdir -p $MODEL_DIR
 
+        # Recherche dynamique du dossier modèle
         MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
-
         if [ -z "$MODEL_PATH" ]; then
           echo "Model folder not found in GCS!"
           exit 1
@@ -94,10 +101,10 @@ jobs:
 
         echo "Found model folder: $MODEL_PATH"
 
-        MODEL_PATH_CLEAN=${MODEL_PATH%/}
+        # Téléchargement des artefacts entraînés
+        gsutil cp -r ${MODEL_PATH}/* $MODEL_DIR/
 
-        gsutil cp -r ${MODEL_PATH_CLEAN}/* $MODEL_DIR/
-
+        # Lancement de l’évaluation
         python3 src/evaluate.py $MODEL_DIR data/prepared
 
     # 12) Visualisation du modèle
@@ -110,7 +117,7 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 13) Upload graphes (evaluation + visualize)
+    # 13) Upload graphes générés (evaluate + visualize)
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
