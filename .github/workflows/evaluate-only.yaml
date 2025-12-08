@@ -70,6 +70,13 @@ jobs:
 
         gsutil cp -r "$MODEL_PATH" "$MODEL_DIR/"
 
+    - name: Debug model folder
+      run: |
+        RUN_ID="${{ github.event.inputs.run_id }}"
+        echo "Listing downloaded model folder:"
+        ls -R "local_model_${RUN_ID}"
+
+
     # 3) Évaluer le modèle
     - name: Evaluate
       run: |
