@@ -196,9 +196,14 @@ model_dir = f"{BASE_PATH}/models/{PAIR}_{RUN_ID}_{timestamp}"
 bucket = storage_client.bucket(BUCKET)
 
 # Sauvegarde modèle
-local_model_path = f"lstm_model_{PAIR}.h5"
-model.save(local_model_path)
-bucket.blob(f"{model_dir}/{local_model_path}").upload_from_filename(local_model_path)
+local_model_dir = f"saved_model_{PAIR}"
+model.save(local_model_dir, save_format="tensorflow")
+
+# Upload du dossier SavedModel sous forme ZIP
+import shutil
+shutil.make_archive(local_model_dir, 'zip', local_model_dir)
+
+bucket.blob(f"{model_dir}/{local_model_dir}.zip").upload_from_filename(f"{local_model_dir}.zip")
 
 # Sauvegarde scaler
 scaler_local_path = "scaler.pkl"
