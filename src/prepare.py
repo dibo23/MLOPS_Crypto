@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import pandas as pd
 import yaml
+import os
 from sklearn.model_selection import train_test_split
 from utils.seed import set_seed
 

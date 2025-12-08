@@ -67,9 +67,9 @@ jobs:
     # 9) Attente FIXE 18 minutes
     - name: Wait for Vertex AI Training Job
       run: |
-        echo "Waiting 18 minutes to let Vertex finish training..."
-        for i in {1..18}; do
-          echo "Minute $i/18..."
+        echo "Waiting 16 minutes to let Vertex finish training..."
+        for i in {1..16}; do
+          echo "Minute $i/16..."
           sleep 60
         done
         echo "Done waiting. Continuing pipeline."
