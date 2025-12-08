@@ -11,3 +11,7 @@ training:
   lookback: 30                 # Number of candles fed into the LSTM
   features: ["close"]
   target: "close"
+
+prepare:
+  seed: 42
+  split: 0.2

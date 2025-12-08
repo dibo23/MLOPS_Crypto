@@ -78,7 +78,7 @@ def main() -> None:
 
     # Chargement des paramètres
     ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-    PARAMS_PATH = os.path.join(ROOT_DIR, "../params.yaml")
+    PARAMS_PATH = os.path.join(ROOT_DIR, "params.yaml")
     prepare_params = yaml.safe_load(open(PARAMS_PATH))["prepare"]
 
     csv_path = Path(sys.argv[1])

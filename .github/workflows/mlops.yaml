@@ -45,7 +45,7 @@ jobs:
         echo "$RUN_ID" > run_id.txt
         python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC/USDT
 
-    # 8) Création du job Vertex + récupération job_id
+    # 8) Création du job Vertex
     - name: Launch Vertex AI Job
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -64,7 +64,7 @@ jobs:
         echo "$JOB_ID" > job_id.txt
         echo "Launched job: $JOB_ID"
 
-    # 9) Attente FIXE 18 minutes
+    # 9) Attente fixe 16 minutes
     - name: Wait for Vertex AI Training Job
       run: |
         echo "Waiting 16 minutes to let Vertex finish training..."
@@ -74,25 +74,33 @@ jobs:
         done
         echo "Done waiting. Continuing pipeline."
 
-    # 10) Install deps local pour évaluation
+    # 10) Dépendances locales pour evaluate
     - name: Install local dependencies (evaluate)
       run: pip install -r requirements.txt
 
-    # 10.5) Préparer dataset local pour evaluate.py
+    # 10.5) Préparer dataset pour evaluate.py
     - name: Prepare dataset for evaluate.py
       run: |
         RUN_ID=$(cat run_id.txt)
-        mkdir -p data/prepared
-        python3 src/prepare.py data/BTC_USDT_${RUN_ID}_raw.csv data/prepared
+        mkdir -p data
+        mkdir -p data/prepared 
 
-    # 11) Évaluation du modèle (plots hyperparams, courbes loss, etc.)
+        # Télécharger le RAW parquet depuis GCS
+        gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
+
+        # Convertir parquet → CSV
+        python3 -c "import pandas as pd; df=pd.read_parquet('data/raw.parquet'); df.to_csv('data/raw.csv', index=False)"
+
+        # Préparer dataset TensorFlow
+        python3 src/prepare.py data/raw.csv data/prepared
+
+    # 11) Évaluation du modèle
     - name: Evaluate trained model
       run: |
         RUN_ID=$(cat run_id.txt)
         MODEL_DIR="local_model_${RUN_ID}"
         mkdir -p $MODEL_DIR
 
-        # Recherche dynamique du dossier modèle
         MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
         if [ -z "$MODEL_PATH" ]; then
           echo "Model folder not found in GCS!"
@@ -101,10 +109,8 @@ jobs:
 
         echo "Found model folder: $MODEL_PATH"
 
-        # Téléchargement des artefacts entraînés
         gsutil cp -r ${MODEL_PATH}/* $MODEL_DIR/
 
-        # Lancement de l’évaluation
         python3 src/evaluate.py $MODEL_DIR data/prepared
 
     # 12) Visualisation du modèle
@@ -117,7 +123,7 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 13) Upload graphes générés (evaluate + visualize)
+    # 13) Upload des graphes
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
