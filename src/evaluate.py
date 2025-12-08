@@ -4,6 +4,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
+import zipfile
+import tempfile
+import os
 
 SAMPLE_SIZE = 5000  # Nombre maximum de points pour les graphiques
 
@@ -158,6 +161,16 @@ def plot_all_tested_configs(all_candidates):
     return fig
 
 
+def load_savedmodel_from_zip(model_zip_path: Path) -> tf.keras.Model:
+    """Dézippe automatiquement le SavedModel et le charge avec TensorFlow."""
+    tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
+
+    with zipfile.ZipFile(model_zip_path, "r") as z:
+        z.extractall(tmpdir)
+
+    return tf.keras.models.load_model(tmpdir)
+
+
 def main() -> None:
     if len(sys.argv) != 3:
         print("Arguments error. Usage:")
@@ -183,8 +196,13 @@ def main() -> None:
         fig = plot_all_tested_configs(all_candidates)
         fig.savefig(plots_folder / "all_hyperparams.png")
 
-    # Chargement du modèle
-    model = tf.keras.models.load_model(model_folder / "model.keras")
+    # Chargement du modèle — version CORRIGÉE : utilise SavedModel ZIP
+    savedmodel_zip = model_folder / "saved_model_BTC_USDT.zip"
+    if not savedmodel_zip.exists():
+        raise FileNotFoundError(f"SavedModel ZIP not found: {savedmodel_zip}")
+
+    print("Loading SavedModel ZIP…")
+    model = load_savedmodel_from_zip(savedmodel_zip)
 
     # Chargement de l'historique
     model_history = np.load(model_folder / "history.npy", allow_pickle=True).item()

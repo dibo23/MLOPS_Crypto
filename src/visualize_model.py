@@ -24,7 +24,18 @@ def load_from_gcs(bucket_name, blob_path):
     blob = bucket.blob(blob_path)
     return blob.download_as_bytes()
 
-# Gestion robuste de tous les formats de modèles Keras
+# Dézippe un SavedModel et retourne un vrai modèle Keras
+def load_savedmodel_zip(tmp_file):
+    extract_dir = os.path.join(tempfile.mkdtemp(prefix="savedmodel_"), "extracted")
+    os.makedirs(extract_dir, exist_ok=True)
+
+    with zipfile.ZipFile(tmp_file, "r") as z:
+        z.extractall(extract_dir)
+
+    # Charge comme un vrai modèle Keras
+    return tf.keras.models.load_model(extract_dir)
+
+# Gestion robuste des formats Keras
 def load_model_from_gcs_safely(bucket_name, blob_name):
     print(f"Downloading model from: {blob_name}")
 
@@ -32,19 +43,20 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
+    # Fichier temporaire local
     tmp_dir = tempfile.mkdtemp(prefix="model_" + str(uuid.uuid4())[:8] + "_")
     tmp_file = os.path.join(tmp_dir, os.path.basename(blob_name))
     blob.download_to_filename(tmp_file)
 
+    # Format .keras ou .h5
     if blob_name.endswith(".h5") or blob_name.endswith(".keras"):
+        print("→ Loading Keras model file")
         return tf.keras.models.load_model(tmp_file)
 
+    # Format zip = SavedModel ZIP
     if blob_name.endswith(".zip"):
-        extract_dir = os.path.join(tmp_dir, "extracted")
-        os.makedirs(extract_dir, exist_ok=True)
-        with zipfile.ZipFile(tmp_file, "r") as z:
-            z.extractall(extract_dir)
-        return tf.keras.layers.TFSMLayer(extract_dir, call_endpoint="serving_default")
+        print("→ Loading SavedModel ZIP")
+        return load_savedmodel_zip(tmp_file)
 
     raise ValueError("Unsupported model format.")
 
@@ -64,10 +76,12 @@ def get_model_folder(bucket_name, base_path, run_id=None):
 
     folders = sorted(folders)
 
+    # Dernier modèle si run_id non spécifié
     if run_id is None:
         print("Latest model folder:", folders[-1].rstrip("/"))
         return folders[-1].rstrip("/")
 
+    # Sélection par RUN_ID
     for f in folders:
         if run_id in f:
             print("Selected model folder:", f.rstrip("/"))
@@ -75,7 +89,7 @@ def get_model_folder(bucket_name, base_path, run_id=None):
 
     raise ValueError(f"Aucun modèle trouvé contenant RUN_ID={run_id}")
 
-# Recherche robuste du fichier modèle (.h5 / .keras / .zip)
+# Recherche du meilleur fichier modèle (keras / h5 / zip)
 def find_model_file(bucket_name, model_folder):
     client = storage.Client()
     bucket = client.bucket(bucket_name)
@@ -105,11 +119,16 @@ def find_model_file(bucket_name, model_folder):
 def load_artifacts_gcs(bucket_name, base_path, run_id=None):
     model_folder = get_model_folder(bucket_name, base_path, run_id)
 
+    # Trouve le fichier modèle correct
     model_blob = find_model_file(bucket_name, model_folder)
+
+    # Charge le modèle (format auto-détecté)
+    model = load_model_from_gcs_safely(bucket_name, model_blob)
+
+    # Charger scaler et dataset
     scaler_blob = f"{model_folder}/scaler.pkl"
     parquet_blob = f"{model_folder}/train_data.parquet"
 
-    model = load_model_from_gcs_safely(bucket_name, model_blob)
     scaler = joblib.load(io.BytesIO(load_from_gcs(bucket_name, scaler_blob)))
     df = pd.read_parquet(io.BytesIO(load_from_gcs(bucket_name, parquet_blob)))
 
@@ -241,7 +260,7 @@ def main():
 
     plt.xticks(rotation=45)
     plt.title("Zoom last 200 points")
-    plt.tight_
+    plt.tight_layout()
     plt.savefig(os.path.join(out_dir, "preds_usd_zoom_200.png"))
     plt.close()
 
