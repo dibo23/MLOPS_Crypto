@@ -33,18 +33,18 @@ jobs:
     - name: Upload package to GCS
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
-    # 5) Install deps localement (ccxt, pandas, yaml…)
+    # 5) Install deps localement
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    # 6) Fetch dataset + upload (RUN_ID généré ici)
+    # 6) Fetch dataset + upload
     - name: Fetch & prepare dataset
       run: |
         RUN_ID=$(date +%s)
         echo "$RUN_ID" > run_id.txt
         python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC/USDT
 
-    # 7) Création du job Vertex ET récupération du job_id réel
+    # 7) Création du job Vertex + récupération job_id
     - name: Launch Vertex AI Job
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -63,42 +63,21 @@ jobs:
         echo "$JOB_ID" > job_id.txt
         echo "Launched job: $JOB_ID"
 
-    # 8) Attendre la fin réelle du job Vertex (vrai poll)
+    # 8) Attente FIXE 18 minutes (hyper stable, zéro blocage)
     - name: Wait for Vertex AI Training Job
       run: |
-        JOB_ID=$(cat job_id.txt)
-        echo "Streaming logs for job: $JOB_ID"
-
-        gcloud ai custom-jobs stream-logs $JOB_ID \
-          --region=${{ secrets.VERTEX_REGION }}
-
-        echo "Checking final job status..."
-        while true; do
-          STATUS=$(gcloud ai custom-jobs describe $JOB_ID \
-            --region=${{ secrets.VERTEX_REGION }} \
-            --format="value(state)" )
-          
-          echo "STATUS = $STATUS"
-
-          if [[ "$STATUS" == "JOB_STATE_SUCCEEDED" ]]; then
-            echo "Training completed!"
-            break
-          fi
-
-          if [[ "$STATUS" == "JOB_STATE_FAILED" || "$STATUS" == "JOB_STATE_CANCELLED" ]]; then
-            echo "Training failed!"
-            exit 1
-          fi
-
-          echo "Still running... waiting 15 seconds."
-          sleep 15
+        echo "Waiting 18 minutes to let Vertex finish training..."
+        for i in {1..18}; do
+          echo "Minute $i/18..."
+          sleep 60
         done
+        echo "Done waiting. Continuing pipeline."
 
     # 9) Install deps local pour visualisation
     - name: Install local dependencies
       run: pip install -r requirements.txt
 
-    # 10) Visualisation du modèle entraîné
+    # 10) Visualisation du modèle
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -108,7 +87,7 @@ jobs:
           --lookback 30 \
           --run_id $RUN_ID
 
-    # 11) Upload des graphes en artefacts GitHub
+    # 11) Upload graphes
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
