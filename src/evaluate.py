@@ -7,10 +7,24 @@ import tensorflow as tf
 import zipfile
 import tempfile
 import os
+import pandas as pd
 
 SAMPLE_SIZE = 5000  # Nombre max de points pour les graphiques
 
 
+# Dataset reconstruction LSTM
+def create_sequences(df, lookback):
+    cols = ["open", "high", "low", "close", "volume"]
+    data = df[cols].values
+
+    X, y = [], []
+    for i in range(lookback, len(data)):
+        X.append(data[i - lookback:i])
+        y.append(data[i, 3])
+    return np.array(X), np.array(y)
+
+
+# PLots déjà existants
 def get_training_plot(model_history: dict) -> plt.Figure:
     epochs = range(1, len(model_history["val_loss"]) + 1)
     fig, ax1 = plt.subplots(figsize=(10, 4))
@@ -31,32 +45,12 @@ def plot_training_narrative(model_history: dict) -> plt.Figure:
 
     fig = plt.figure(figsize=(12, 6))
     plt.plot(epochs, val_loss, label="Validation Loss", linewidth=2)
-
     plt.axvline(best_epoch, color="red", linestyle="--", label=f"Best Epoch = {best_epoch}")
     plt.axhline(best_val, color="green", linestyle="--", label=f"Best Val Loss = {best_val:.4f}")
-
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     return fig
-
-
-def collect_predictions(model, ds_test):
-    y_true = []
-    y_pred = []
-
-    for x_batch, y_batch in ds_test:
-        preds = model(x_batch)["output_0"].numpy().flatten()
-        y_true.extend(y_batch.numpy().flatten())
-        y_pred.extend(preds)
-
-        if len(y_true) > SAMPLE_SIZE:
-            break
-
-    y_true = np.array(y_true[:SAMPLE_SIZE])
-    y_pred = np.array(y_pred[:SAMPLE_SIZE])
-
-    return y_true, y_pred
 
 
 def get_pred_vs_true_plot(y_true, y_pred):
@@ -91,28 +85,26 @@ def get_error_distribution_plot(y_true, y_pred):
 def get_correlation_plot(y_true, y_pred):
     fig = plt.figure(figsize=(6, 6))
     plt.scatter(y_true, y_pred, s=5, alpha=0.5)
-
     min_val = min(y_true.min(), y_pred.min())
     max_val = max(y_true.max(), y_pred.max())
     plt.plot([min_val, max_val], [min_val, max_val], linestyle="--")
-
     plt.grid(True)
     plt.tight_layout()
     return fig
 
+# Collect predictions
+def collect_predictions(model, X, y):
+    preds = model(X)
+    if isinstance(preds, dict):
+        preds = preds["output_0"]
 
-def plot_all_tested_configs(all_candidates):
-    fig = plt.figure(figsize=(14, 7))
-    for i, cand in enumerate(all_candidates):
-        epochs = [h["epoch"] for h in cand["history"]]
-        val_losses = [h["val_loss"] for h in cand["history"]]
-        plt.plot(epochs, val_losses, marker="o",
-                 label=f"{i+1}: " + ", ".join(f"{k}={v}" for k,v in cand["config"].items()))
-    plt.legend(fontsize=7)
-    plt.tight_layout()
-    return fig
+    preds = preds.numpy().flatten()
+    y = y.flatten()
 
+    # Limit to SAMPLE_SIZE
+    return y[:SAMPLE_SIZE], preds[:SAMPLE_SIZE]
 
+# MAIN
 def main():
     if len(sys.argv) != 3:
         print("Usage: python3 evaluate.py <model-folder> <prepared-dataset-folder>")
@@ -125,18 +117,25 @@ def main():
     plots_folder = evaluation_folder / "plots"
     plots_folder.mkdir(parents=True, exist_ok=True)
 
-    # 1) Charger dataset TFRecord
-    ds_test = tf.data.Dataset.load(str(prepared_folder / "test"))
+    # 1) Load model_config.json → GET LOOKBACK
+    config_file = model_folder / "model_config.json"
+    if not config_file.exists():
+        raise FileNotFoundError("model_config.json not found — cannot determine lookback.")
 
-    # 2) Hyperparams testés (visualisation)
-    candidates_file = model_folder / "all_candidates.json"
-    if candidates_file.exists():
-        with open(candidates_file, "r") as f:
-            all_candidates = json.load(f)
-        fig = plot_all_tested_configs(all_candidates)
-        fig.savefig(plots_folder / "all_hyperparams.png")
+    with open(config_file, "r") as f:
+        cfg = json.load(f)
 
-    # 3) Charger SavedModel exporté
+    lookback = cfg["lookback"]
+    print(f"[INFO] Model lookback detected = {lookback}")
+
+    # 2) Load raw TFRecord → Convert back to Pandas
+    df = pd.read_csv(prepared_folder / "raw.csv") if (prepared_folder / "raw.csv").exists() \
+        else pd.read_csv(prepared_folder / "../raw.csv")
+
+    # 3) Rebuild TEST dataset with correct lookback
+    X_test, y_test = create_sequences(df, lookback)
+
+    # 4) Load SavedModel Vertex (TFSMLayer)
     saved_zip = next(model_folder.glob("saved_model_*.zip"))
     tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
 
@@ -145,38 +144,26 @@ def main():
 
     model = tf.keras.layers.TFSMLayer(tmpdir, call_endpoint="serving_default")
 
-    # 4) Charger l’historique HPO
-    raw_history = np.load(model_folder / "history.npy", allow_pickle=True)
-    model_history = {"val_loss": [h["val_loss"] for h in raw_history]}
+    # 5) Predictions
+    y_true, y_pred = collect_predictions(model, X_test, y_test)
 
-    # 5) Predictions complètes
-    y_true, y_pred = collect_predictions(model, ds_test)
-
-    # 6) Calcul metrics
+    # 6) Metrics
     mae = float(np.mean(np.abs(y_true - y_pred)))
-    mse = float(np.mean((y_true - y_pred)**2))
+    mse = float(np.mean((y_true - y_pred) ** 2))
 
     with open(evaluation_folder / "metrics.json", "w") as f:
         json.dump({"mae": mae, "mse": mse}, f, indent=2)
 
-    # 7) Sauvegarde des plots
-    fig = get_training_plot(model_history)
-    fig.savefig(plots_folder / "training_history.png")
+    # 7) Plots
+    raw_history = np.load(model_folder / "history.npy", allow_pickle=True)
+    model_history = {"val_loss": [h["val_loss"] for h in raw_history]}
 
-    fig = plot_training_narrative(model_history)
-    fig.savefig(plots_folder / "training_narrative.png")
-
-    fig = get_pred_vs_true_plot(y_true, y_pred)
-    fig.savefig(plots_folder / "pred_vs_true.png")
-
-    fig = get_error_over_time_plot(y_true, y_pred)
-    fig.savefig(plots_folder / "error_over_time.png")
-
-    fig = get_error_distribution_plot(y_true, y_pred)
-    fig.savefig(plots_folder / "error_distribution.png")
-
-    fig = get_correlation_plot(y_true, y_pred)
-    fig.savefig(plots_folder / "correlation.png")
+    get_training_plot(model_history).savefig(plots_folder / "training_history.png")
+    plot_training_narrative(model_history).savefig(plots_folder / "training_narrative.png")
+    get_pred_vs_true_plot(y_true, y_pred).savefig(plots_folder / "pred_vs_true.png")
+    get_error_over_time_plot(y_true, y_pred).savefig(plots_folder / "error_over_time.png")
+    get_error_distribution_plot(y_true, y_pred).savefig(plots_folder / "error_distribution.png")
+    get_correlation_plot(y_true, y_pred).savefig(plots_folder / "correlation.png")
 
     print("Evaluation finished. Saved at:", evaluation_folder.absolute())
 
