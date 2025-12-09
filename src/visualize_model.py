@@ -24,7 +24,6 @@ def load_from_gcs(bucket_name, blob_path):
     blob = bucket.blob(blob_path)
     return blob.download_as_bytes()
 
-# Dézippe un SavedModel et retourne un vrai modèle Keras
 def load_savedmodel_zip(tmp_file):
     extract_dir = os.path.join(tempfile.mkdtemp(prefix="savedmodel_"), "extracted")
     os.makedirs(extract_dir, exist_ok=True)
@@ -32,8 +31,8 @@ def load_savedmodel_zip(tmp_file):
     with zipfile.ZipFile(tmp_file, "r") as z:
         z.extractall(extract_dir)
 
-    # Charge comme un vrai modèle Keras
-    return tf.keras.models.load_model(extract_dir)
+    # Load SavedModel using TFSMLayer (Keras 3 compatible)
+    return tf.keras.layers.TFSMLayer(extract_dir, call_endpoint="serving_default")
 
 def load_model_from_gcs_safely(bucket_name, blob_name):
     print(f"Downloading model from: {blob_name}")
