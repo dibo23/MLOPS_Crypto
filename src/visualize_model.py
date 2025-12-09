@@ -24,6 +24,7 @@ def load_from_gcs(bucket_name, blob_path):
     blob = bucket.blob(blob_path)
     return blob.download_as_bytes()
 
+# Dézippe un SavedModel et retourne un vrai modèle Keras (compatible Keras 3)
 def load_savedmodel_zip(tmp_file):
     extract_dir = os.path.join(tempfile.mkdtemp(prefix="savedmodel_"), "extracted")
     os.makedirs(extract_dir, exist_ok=True)
@@ -34,6 +35,7 @@ def load_savedmodel_zip(tmp_file):
     # Load SavedModel using TFSMLayer (Keras 3 compatible)
     return tf.keras.layers.TFSMLayer(extract_dir, call_endpoint="serving_default")
 
+# Gestion robuste des formats modèle exportés par Vertex AI
 def load_model_from_gcs_safely(bucket_name, blob_name):
     print(f"Downloading model from: {blob_name}")
 
@@ -46,17 +48,19 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
     tmp_file = os.path.join(tmp_dir, os.path.basename(blob_name))
     blob.download_to_filename(tmp_file)
 
-    # IMPORTANT : sur Vertex AI, .keras = archive ZIP SavedModel
-    if blob_name.endswith(".keras"):
-        print("→ .keras detected: loading as ZIP (Vertex AI export format)")
-        return load_savedmodel_zip(tmp_file)
-
+    # 1) ZIP → SavedModel compressé
     if blob_name.endswith(".zip"):
-        print("→ Loading SavedModel ZIP")
+        print("→ Loading SavedModel ZIP via TFSMLayer")
         return load_savedmodel_zip(tmp_file)
 
+    # 2) Vertex génère .keras qui est en réalité un SavedModel compressé
+    if blob_name.endswith(".keras"):
+        print("→ Loading .keras (Vertex) as SavedModel ZIP")
+        return load_savedmodel_zip(tmp_file)
+
+    # 3) Format H5 classique
     if blob_name.endswith(".h5"):
-        print("→ Loading native H5 model")
+        print("→ Loading native H5 Keras model")
         return tf.keras.models.load_model(tmp_file)
 
     raise ValueError(f"Unsupported model format for file: {blob_name}")
@@ -90,26 +94,26 @@ def get_model_folder(bucket_name, base_path, run_id=None):
 
     raise ValueError(f"Aucun modèle trouvé contenant RUN_ID={run_id}")
 
-# Recherche du meilleur fichier modèle (keras / h5 / zip)
+# Recherche du fichier modèle optimal (ZIP → .keras → .h5)
 def find_model_file(bucket_name, model_folder):
     client = storage.Client()
     bucket = client.bucket(bucket_name)
 
     blobs = list(bucket.list_blobs(prefix=model_folder + "/"))
 
-    # 1) Toujours essayer d'abord le SavedModel ZIP
+    # 1) Toujours charger en priorité le ZIP (format officiel Vertex)
     zip_files = [b.name for b in blobs if b.name.endswith(".zip")]
     if zip_files:
         print("Detected ZIP SavedModel:", zip_files[0])
         return zip_files[0]
 
-    # 2) Si pas de ZIP, utiliser .keras (rare)
+    # 2) Sinon .keras → doit être chargé comme ZIP
     keras_files = [b.name for b in blobs if b.name.endswith(".keras")]
     if keras_files:
-        print("Detected .keras Keras model:", keras_files[0])
+        print("Detected Vertex .keras model:", keras_files[0])
         return keras_files[0]
 
-    # 3) Si pas de .keras, fallback .h5
+    # 3) Fallback H5
     h5_files = [b.name for b in blobs if b.name.endswith(".h5")]
     if h5_files:
         print("Detected H5 model:", h5_files[0])
