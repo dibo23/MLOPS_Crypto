@@ -24,22 +24,23 @@ DAYS = FEEDER.get("days", 90)
 
 # Configuration GCS
 BUCKET_URI = FEEDER["bucket"].rstrip("/")
-BUCKET = BUCKET_URI.replace("gs://", "").split("/")[0]  # Correction
+BUCKET = BUCKET_URI.replace("gs://", "").split("/")[0]
 OUTPUT_PATH = FEEDER.get("output_path", "ohlcv-data")
 
 # Exchange + client GCS
 exchange = ccxt.kucoin()
 storage_client = storage.Client()
 
-# Args depuis GitHub Actions pour aligner RUN_ID
+# Args depuis GitHub Actions
 parser = argparse.ArgumentParser()
 parser.add_argument("--run_id", type=str, required=True)
 parser.add_argument("--pair", type=str, required=True)
 args = parser.parse_args()
 
 RUN_ID = args.run_id
-PAIR_RAW = args.pair                  # Forme API : BTC/USDT
-PAIR = args.pair.replace("/", "_")    # Forme GCS : BTC_USDT
+PAIR_RAW = args.pair                  # ex: BTC/USDT
+PAIR = args.pair.replace("/", "_")    # ex: BTC_USDT
+
 
 def fetch_ohlcv(pair, since, timeframe):
     """Télécharge OHLCV depuis KuCoin."""
@@ -56,6 +57,7 @@ def fetch_ohlcv(pair, since, timeframe):
         since = data[-1][0] + 1
         time.sleep(exchange.rateLimit / 1000)
 
+        # Sécurité
         if len(all_data) > 200000:
             break
 
@@ -64,20 +66,30 @@ def fetch_ohlcv(pair, since, timeframe):
     print(f"{len(df)} rows fetched for {pair}")
     return df
 
-def normalize_data(df):
-    """Normalisation MinMax."""
+
+def normalize_split(df):
+    """Normalise + split train/test."""
     cols = ["open", "high", "low", "close", "volume"]
     scaler = MinMaxScaler()
 
-    df2 = df.copy()
-    df2[cols] = scaler.fit_transform(df[cols])
+    df_norm = df.copy()
+    df_norm[cols] = scaler.fit_transform(df[cols])
 
-    return df2, scaler
+    # Split 90% train, 10% test (time series → no shuffle)
+    n = len(df_norm)
+    split_idx = int(n * 0.9)
 
-def upload_to_gcs(df, path):
-    """Upload DataFrame vers GCS."""
+    df_train = df_norm.iloc[:split_idx].reset_index(drop=True)
+    df_test = df_norm.iloc[split_idx:].reset_index(drop=True)
+
+    print(f"Split: train={len(df_train)}, test={len(df_test)}")
+
+    return df_train, df_test, scaler
+
+
+def upload_parquet(df, path):
+    """Upload DataFrame vers GCS au format parquet."""
     bucket = storage_client.bucket(BUCKET)
-
     buf = io.BytesIO()
     df.to_parquet(buf, index=False)
     buf.seek(0)
@@ -86,32 +98,36 @@ def upload_to_gcs(df, path):
     blob.upload_from_file(buf, rewind=True)
     print(f"Uploaded: gs://{BUCKET}/{path}")
 
+
 def main():
     since = (datetime.now(timezone.utc) - timedelta(days=DAYS)).timestamp() * 1000
 
     print(f"\n=== Processing {PAIR} with RUN_ID {RUN_ID} ===")
 
-    # 1) Récupération RAW
+    # 1) Fetch RAW
     df_raw = fetch_ohlcv(PAIR_RAW, since, INTERVAL)
 
     if df_raw.empty:
         raise ValueError(f"No data fetched for {PAIR_RAW}. Cannot continue.")
 
-    upload_to_gcs(df_raw, f"{OUTPUT_PATH}/{PAIR}_raw_{RUN_ID}.parquet")
+    upload_parquet(df_raw, f"{OUTPUT_PATH}/{PAIR}_raw_{RUN_ID}.parquet")
 
-    # 2) Normalisation
-    df_train, scaler = normalize_data(df_raw)
-    upload_to_gcs(df_train, f"{OUTPUT_PATH}/{PAIR}_train_{RUN_ID}.parquet")
+    # 2) Normalisation + split
+    df_train, df_test, scaler = normalize_split(df_raw)
+
+    upload_parquet(df_train, f"{OUTPUT_PATH}/{PAIR}_train_{RUN_ID}.parquet")
+    upload_parquet(df_test, f"{OUTPUT_PATH}/{PAIR}_test_{RUN_ID}.parquet")
 
     # 3) Upload scaler
-    local_scaler = f"scaler_{PAIR}_{RUN_ID}.pkl"
-    joblib.dump(scaler, local_scaler)
+    scaler_file = f"scaler_{PAIR}_{RUN_ID}.pkl"
+    joblib.dump(scaler, scaler_file)
 
     bucket = storage_client.bucket(BUCKET)
-    bucket.blob(f"{OUTPUT_PATH}/scalers/{local_scaler}").upload_from_filename(local_scaler)
-    os.remove(local_scaler)
+    bucket.blob(f"{OUTPUT_PATH}/scalers/{scaler_file}").upload_from_filename(scaler_file)
+    os.remove(scaler_file)
 
     print("\nDataset + scaler uploaded successfully.\n")
+
 
 if __name__ == "__main__":
     main()

@@ -7,12 +7,27 @@ import tensorflow as tf
 import zipfile
 import tempfile
 import os
+import pandas as pd
+import joblib
 
 SAMPLE_SIZE = 5000  # Nombre maximum de points pour les graphiques
 
 
+def create_sequences(df, lookback):
+    """Reconstruit les séquences LSTM à partir d’un DataFrame normalisé."""
+    cols = ["open", "high", "low", "close", "volume"]
+    data = df[cols].values.astype("float32")
+
+    X, y = [], []
+    for i in range(lookback, len(data)):
+        X.append(data[i - lookback:i])
+        y.append(data[i, 3])  # close
+
+    return np.array(X), np.array(y)
+
+
 def get_training_plot(model_history: dict) -> plt.Figure:
-    """Génère la figure des courbes loss / val_loss / MAE."""
+    """Génère la figure des courbes loss / val_loss."""
     epochs = range(1, len(model_history["loss"]) + 1)
 
     fig, ax1 = plt.subplots(figsize=(10, 4))
@@ -29,12 +44,11 @@ def get_training_plot(model_history: dict) -> plt.Figure:
 
 
 def plot_training_narrative(model_history: dict) -> plt.Figure:
-    """Graphique complet montrant entraînement, val_loss, meilleur modèle et early stopping."""
+    """Graphique montrant val_loss + best epoch."""
     loss = model_history["loss"]
     val_loss = model_history["val_loss"]
     epochs = range(1, len(loss) + 1)
 
-    # Trouver la meilleure epoch
     best_epoch = int(np.argmin(val_loss)) + 1
     best_val = float(np.min(val_loss))
 
@@ -42,7 +56,6 @@ def plot_training_narrative(model_history: dict) -> plt.Figure:
     plt.plot(epochs, loss, label="Training Loss", linewidth=2)
     plt.plot(epochs, val_loss, label="Validation Loss", linewidth=2)
 
-    # Epoch optimale
     plt.axvline(best_epoch, color="red", linestyle="--", label=f"Best Epoch = {best_epoch}")
     plt.axhline(best_val, color="green", linestyle="--", label=f"Best Val Loss = {best_val:.4f}")
 
@@ -56,22 +69,12 @@ def plot_training_narrative(model_history: dict) -> plt.Figure:
     return fig
 
 
-def get_pred_vs_true_plot(model: tf.keras.Model, ds_test: tf.data.Dataset, sample_size=SAMPLE_SIZE):
-    """Génère un plot y_true vs y_pred (valeurs normalisées par le modèle)."""
-    y_true, y_pred = [], []
+def get_pred_vs_true_plot(model, X_test, y_test, sample_size=SAMPLE_SIZE):
+    """Génère y_true vs y_pred sur le test."""
+    preds = model(X_test)["output_0"].numpy().flatten()
 
-    for x_batch, y_batch in ds_test:
-        if len(y_true) >= sample_size:
-            break
-
-        # IMPORTANT : on garde les séquences complètes → modèle LSTM les utilise
-        preds = model(x_batch)["output_0"].numpy()
-
-        y_true.append(y_batch.numpy())
-        y_pred.append(preds)
-
-    y_true = np.concatenate(y_true)[:sample_size].flatten()
-    y_pred = np.concatenate(y_pred)[:sample_size].flatten()
+    y_true = y_test[:sample_size]
+    y_pred = preds[:sample_size]
 
     fig = plt.figure(figsize=(12, 5))
     plt.plot(y_true, label="True Close", linewidth=1)
@@ -86,8 +89,7 @@ def get_pred_vs_true_plot(model: tf.keras.Model, ds_test: tf.data.Dataset, sampl
     return fig, y_true, y_pred
 
 
-def get_error_over_time_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figure:
-    """Génère le graphique de l'erreur absolue au fil du temps."""
+def get_error_over_time_plot(y_true, y_pred):
     abs_error = np.abs(y_true - y_pred)
 
     fig = plt.figure(figsize=(10, 4))
@@ -97,12 +99,10 @@ def get_error_over_time_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figu
     plt.ylabel("Absolute Error")
     plt.grid(True)
     plt.tight_layout()
-
     return fig
 
 
-def get_error_distribution_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figure:
-    """Histogramme de la distribution des erreurs."""
+def get_error_distribution_plot(y_true, y_pred):
     errors = (y_true - y_pred)
 
     fig = plt.figure(figsize=(8, 5))
@@ -112,12 +112,10 @@ def get_error_distribution_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.F
     plt.ylabel("Frequency")
     plt.grid(True)
     plt.tight_layout()
-
     return fig
 
 
-def get_correlation_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figure:
-    """Scatter plot y_true vs y_pred."""
+def get_correlation_plot(y_true, y_pred):
     fig = plt.figure(figsize=(6, 6))
     plt.scatter(y_true, y_pred, s=5, alpha=0.5)
 
@@ -130,14 +128,11 @@ def get_correlation_plot(y_true: np.ndarray, y_pred: np.ndarray) -> plt.Figure:
     plt.title("Predicted vs True Values")
     plt.grid(True)
     plt.tight_layout()
-
     return fig
 
 
 def plot_all_tested_configs(all_candidates):
-    """Plot des val_loss pour toutes les configs testées."""
     fig = plt.figure(figsize=(14, 7))
-
     for i, cand in enumerate(all_candidates):
         history = cand["history"]
         epochs = [h["epoch"] for h in history]
@@ -152,83 +147,88 @@ def plot_all_tested_configs(all_candidates):
     plt.grid(True)
     plt.legend(fontsize=7, loc="upper right")
     plt.tight_layout()
-
     return fig
 
 
-def main() -> None:
+def main():
     if len(sys.argv) != 3:
-        print("Arguments error. Usage: python3 evaluate.py <model-folder> <prepared-dataset-folder>")
+        print("Arguments error. Usage: python3 evaluate.py <model-folder> <test-folder>")
         exit(1)
 
     model_folder = Path(sys.argv[1])
-    prepared_dataset_folder = Path(sys.argv[2])
+    test_folder = Path(sys.argv[2])
 
     evaluation_folder = Path("evaluation")
     plots_folder = evaluation_folder / "plots"
     plots_folder.mkdir(parents=True, exist_ok=True)
 
-    # Chargement dataset test
-    ds_test = tf.data.Dataset.load(str(prepared_dataset_folder / "test"))
+    # 1) Chargement du test parquet
+    test_parquet = test_folder / "test.parquet"
+    scaler_path = test_folder / "scaler.pkl"
+    metadata_path = test_folder / "metadata.json"
 
-    # Affichage des configs testées
+    if not test_parquet.exists():
+        raise FileNotFoundError(f"Missing test file: {test_parquet}")
+
+    df_test = pd.read_parquet(test_parquet)
+
+    if not scaler_path.exists():
+        raise FileNotFoundError(f"Missing scaler: {scaler_path}")
+
+    scaler = joblib.load(scaler_path)
+
+    with open(metadata_path, "r") as f:
+        metadata = json.load(f)
+
+    lookback = metadata["lookback"]
+
+    # Normalisation identique au train
+    cols = ["open", "high", "low", "close", "volume"]
+    df_test[cols] = scaler.transform(df_test[cols])
+
+    # Reconstruction des séquences test
+    X_test, y_test = create_sequences(df_test, lookback)
+
+    # 2) Affichage des hyperparamètres testés
     candidates_path = model_folder / "all_candidates.json"
     if candidates_path.exists():
         with open(candidates_path, "r") as f:
             all_candidates = json.load(f)
-
         fig = plot_all_tested_configs(all_candidates)
         fig.savefig(plots_folder / "all_hyperparams.png")
 
-    # Chargement SavedModel ZIP
-    savedmodel_zip = model_folder / "saved_model_BTC_USDT.zip"
-    if not savedmodel_zip.exists():
-        raise FileNotFoundError(f"SavedModel ZIP not found: {savedmodel_zip}")
-
+    # 3) Chargement SavedModel ZIP
+    savedmodel_zip = next(model_folder.glob("saved_model_*.zip"))
     tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
     with zipfile.ZipFile(savedmodel_zip, "r") as z:
         z.extractall(tmpdir)
 
-    # Modèle TFSMLayer
     model = tf.keras.layers.TFSMLayer(tmpdir, call_endpoint="serving_default")
 
-    # Historique training (uniquement val_loss)
+    # 4) Chargement de l'historique
     raw_history = np.load(model_folder / "history.npy", allow_pickle=True)
     model_history = {
         "loss": [0] * len(raw_history),
         "val_loss": [h["val_loss"] for h in raw_history]
     }
 
-    # Évaluation manuelle
-    absolute_errors = []
-    squared_errors = []
+    # 5) Prédictions complètes
+    fig, y_true, y_pred = get_pred_vs_true_plot(model, X_test, y_test)
+    fig.savefig(plots_folder / "pred_vs_true.png")
 
-    for x_batch, y_batch in ds_test:
-        preds = model(x_batch)["output_0"].numpy().flatten()
-        y_true = y_batch.numpy().flatten()
+    # 6) Évaluation manuelle
+    mae = float(np.mean(np.abs(y_true - y_pred)))
+    mse = float(np.mean((y_true - y_pred) ** 2))
 
-        absolute_errors.extend(np.abs(preds - y_true))
-        squared_errors.extend((preds - y_true) ** 2)
-
-    mae = float(np.mean(absolute_errors))
-    loss = float(np.mean(squared_errors))
-
-    print(f"Validation loss (MSE): {loss:.4f}")
-    print(f"Validation MAE: {mae:.4f}")
-
-    # Sauvegarde métriques
     with open(evaluation_folder / "metrics.json", "w") as f:
-        json.dump({"val_loss": loss, "val_mae": mae}, f, indent=2)
+        json.dump({"mae": mae, "mse": mse}, f, indent=2)
 
-    # Graphiques
+    # 7) Graphiques finaux
     fig = get_training_plot(model_history)
     fig.savefig(plots_folder / "training_history.png")
 
     fig = plot_training_narrative(model_history)
     fig.savefig(plots_folder / "training_narrative.png")
-
-    fig, y_true, y_pred = get_pred_vs_true_plot(model, ds_test)
-    fig.savefig(plots_folder / "pred_vs_true.png")
 
     fig = get_error_over_time_plot(y_true, y_pred)
     fig.savefig(plots_folder / "error_over_time.png")
@@ -239,7 +239,7 @@ def main() -> None:
     fig = get_correlation_plot(y_true, y_pred)
     fig.savefig(plots_folder / "correlation.png")
 
-    print("Evaluation metrics and plots saved at", evaluation_folder.absolute())
+    print("Evaluation finished. Saved in:", evaluation_folder.absolute())
 
 
 if __name__ == "__main__":

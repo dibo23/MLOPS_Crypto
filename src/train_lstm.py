@@ -22,8 +22,6 @@ parser.add_argument("--data_prefix", type=str, required=True)
 parser.add_argument("--pair", type=str, default="BTC_USDT")
 parser.add_argument("--run_id", type=str, required=True)
 parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument("--batch_size", type=int, default=128)
-parser.add_argument("--lookback", type=int, default=60)
 args = parser.parse_args()
 
 # Standardisation du nom
@@ -77,22 +75,16 @@ def create_sequences(df, lookback=60):
 
     return np.array(X), np.array(y)
 
-# Entraînement sur une configuration
+# Entraînement d’une configuration HPO
 def train_one_config(df, cfg, epochs, patience_factor):
     tf.keras.backend.clear_session()
 
     X, y = create_sequences(df, cfg["lookback"])
     print(f"Training config: {cfg} → X={X.shape}, y={y.shape}")
 
-    norm = tf.keras.layers.Normalization()
-    norm.adapt(X.reshape(-1, X.shape[2]))
-
-    ds = tf.data.Dataset.from_tensor_slices((X, y))
-    ds = ds.shuffle(2048).batch(cfg["batch_size"]).prefetch(tf.data.AUTOTUNE)
-
+    # Modèle LSTM (normalisation déjà faite dans fetch)
     model = tf.keras.Sequential([
         tf.keras.layers.Input(shape=(cfg["lookback"], X.shape[2])),
-        tf.keras.layers.TimeDistributed(norm),
         tf.keras.layers.LSTM(cfg["lstm_units"]),
         tf.keras.layers.Dense(1)
     ])
@@ -103,11 +95,21 @@ def train_one_config(df, cfg, epochs, patience_factor):
     history_epochs = []
     best_val_loss = float("inf")
 
+    # Split train / validation interne (10%)
+    ds_size = len(X)
+    val_size = int(ds_size * 0.1)
+
+    train_ds = tf.data.Dataset.from_tensor_slices((X[:-val_size], y[:-val_size])) \
+        .batch(cfg["batch_size"]).prefetch(tf.data.AUTOTUNE)
+
+    val_ds = tf.data.Dataset.from_tensor_slices((X[-val_size:], y[-val_size:])) \
+        .batch(cfg["batch_size"]).prefetch(tf.data.AUTOTUNE)
+
     for epoch in range(epochs):
         hist = model.fit(
-            ds,
+            train_ds,
+            validation_data=val_ds,
             epochs=1,
-            validation_split=0.1,
             verbose=0
         )
 
@@ -141,7 +143,7 @@ def evaluate_all_configs(df, configs, max_epochs, patience_factor):
     candidates.sort(key=lambda c: c["final_val_loss"])
     return candidates
 
-# Chargement dataset
+# Chargement dataset TRAIN
 train_path = f"{BASE_PATH}/{PAIR}_train_{RUN_ID}.parquet"
 scaler_path = f"{BASE_PATH}/scalers/scaler_{PAIR}_{RUN_ID}.pkl"
 
@@ -151,7 +153,7 @@ df = load_parquet_from_gcs(BUCKET, train_path)
 print(f"Loading scaler: gs://{BUCKET}/{scaler_path}")
 scaler = load_scaler_from_gcs(BUCKET, scaler_path)
 
-# Application du scaler
+# Re-normalisation identique à fetch
 cols = ["open", "high", "low", "close", "volume"]
 df[cols] = scaler.transform(df[cols])
 
@@ -193,7 +195,7 @@ timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
 model_dir = f"{BASE_PATH}/models/{PAIR}_{RUN_ID}_{timestamp}"
 bucket = storage_client.bucket(BUCKET)
 
-# Export SavedModel
+# Export SavedModel pour evaluate.py
 class Serve(tf.Module):
     def __init__(self, model):
         super().__init__()
@@ -225,7 +227,7 @@ joblib.dump(scaler, scaler_local_path)
 bucket.blob(f"{model_dir}/scaler.pkl").upload_from_filename(scaler_local_path)
 os.remove(scaler_local_path)
 
-# Sauvegarde dataset
+# Sauvegarde dataset normalisé
 train_local_path = "train_data.parquet"
 df.to_parquet(train_local_path)
 bucket.blob(f"{model_dir}/train_data.parquet").upload_from_filename(train_local_path)

@@ -7,82 +7,58 @@ import pandas as pd
 import yaml
 import os
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
 from utils.seed import set_seed
 
-
 def get_preview_plot(df: pd.DataFrame) -> plt.Figure:
-    """Affiche un aperçu de la série temporelle (prix de clôture)"""
     fig, ax = plt.subplots(figsize=(10, 5))
-    if "close" in df.columns:
-        ax.plot(df["timestamp"], df["close"], label="Prix de clôture (close)")
-        ax.set_ylabel("Prix de clôture")
-    else:
-        num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-        ax.plot(df["timestamp"], df[num_cols[0]], label=num_cols[0])
-        ax.set_ylabel(num_cols[0])
-
-    ax.set_title("Aperçu des données financières")
+    ax.plot(df["timestamp"], df["close"], label="Prix de clôture")
+    ax.set_ylabel("Prix de clôture")
     ax.set_xlabel("Date")
+    ax.set_title("Aperçu des données financières")
     ax.legend()
     plt.xticks(rotation=45)
     plt.tight_layout()
     return fig
 
-
 def create_lstm_sequences(X, y, lookback):
-    """Transforme X,y en séquences LSTM (lookback, features)"""
     sequences_X = []
     sequences_y = []
-
     for i in range(len(X) - lookback):
         sequences_X.append(X[i:i+lookback])
         sequences_y.append(y[i+lookback])
-
     return (
         tf.convert_to_tensor(sequences_X, dtype=tf.float32),
         tf.convert_to_tensor(sequences_y, dtype=tf.float32)
     )
 
-
 def load_dataset_from_csv(csv_path: Path, test_split: float, seed: int, lookback: int):
-    """Charge les données OHLCV depuis un fichier CSV"""
     df = pd.read_csv(csv_path)
 
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-        df = df.sort_values("timestamp").reset_index(drop=True)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.sort_values("timestamp").reset_index(drop=True)
 
-    exclude_cols = {"timestamp", "timeframe", "symbol"}
-    numeric_cols = [
-        col for col in df.columns
-        if pd.api.types.is_numeric_dtype(df[col]) and col not in exclude_cols
-    ]
-
-    if not numeric_cols:
-        raise ValueError("Aucune colonne numérique détectée dans le CSV !")
-
-    print(f"\n Colonnes utilisées pour l'entraînement : {numeric_cols}")
-
+    numeric_cols = ["open", "high", "low", "close", "volume"]
     X = df[numeric_cols].values.astype("float32")
+    y = df["close"].values.astype("float32")
 
-    target_col = "close" if "close" in df.columns else numeric_cols[-1]
-    y = df[target_col].values.astype("float32")
+    # Normalisation IDENTIQUE à fetch_and_train.py
+    scaler = MinMaxScaler()
+    X_scaled = scaler.fit_transform(X)
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_split, random_state=seed, shuffle=False
+        X_scaled, y, test_size=test_split, random_state=seed, shuffle=False
     )
 
-    # Transformation LSTM : (samples, lookback, features)
     X_train, y_train = create_lstm_sequences(X_train, y_train, lookback)
     X_test, y_test = create_lstm_sequences(X_test, y_test, lookback)
 
     ds_train = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(32)
     ds_test = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(32)
 
-    return df, ds_train, ds_test, numeric_cols
+    return df, ds_train, ds_test, numeric_cols, scaler
 
-
-def main() -> None:
+def main():
     if len(sys.argv) != 3:
         print("Arguments error. Usage:\n")
         print("\tpython3 prepare.py <dataset.csv> <prepared-dataset-folder>\n")
@@ -100,22 +76,23 @@ def main() -> None:
 
     set_seed(seed)
 
-    df, ds_train, ds_test, numeric_cols = load_dataset_from_csv(csv_path, split, seed, lookback)
+    df, ds_train, ds_test, numeric_cols, scaler = load_dataset_from_csv(
+        csv_path, split, seed, lookback
+    )
 
     prepared_dataset_folder.mkdir(parents=True, exist_ok=True)
 
+    # Aperçu
     preview_plot = get_preview_plot(df)
     preview_plot.savefig(prepared_dataset_folder / "preview.png")
 
-    # Normalisation appliquée sur chaque timestep
-    normalization_layer = tf.keras.layers.Normalization()
-    normalization_layer.adapt(df[numeric_cols].values)
-
-    ds_train = ds_train.map(lambda x, y: (normalization_layer(x), y))
-    ds_test = ds_test.map(lambda x, y: (normalization_layer(x), y))
-
+    # Sauvegarde des datasets
     tf.data.Dataset.save(ds_train, str(prepared_dataset_folder / "train"))
     tf.data.Dataset.save(ds_test, str(prepared_dataset_folder / "test"))
+
+    # Sauvegarde du scaler utilisé
+    import joblib
+    joblib.dump(scaler, prepared_dataset_folder / "scaler.pkl")
 
     metadata = {
         "features": numeric_cols,
@@ -127,8 +104,7 @@ def main() -> None:
     with open(prepared_dataset_folder / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
-    print(f"\n Données préparées et sauvegardées dans {prepared_dataset_folder.absolute()}")
-
+    print(f"\nDonnées préparées dans {prepared_dataset_folder.absolute()}")
 
 if __name__ == "__main__":
     main()
