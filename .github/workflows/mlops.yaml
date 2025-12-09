@@ -146,5 +146,5 @@ jobs:
       with:
         name: evaluation-plots
         path: |
-          evaluation/
-          evaluation/plots_gcs/
+          evaluation/**
+          evaluation/plots_gcs/**
