@@ -214,7 +214,12 @@ def main():
 
     # Prédiction t+1
     last_seq = features_full[-lookback:].reshape(1, lookback, n_features)
-    future_pred_norm = float(model(last_seq).numpy()[0][0])
+
+    raw_future = model(last_seq)
+    if isinstance(raw_future, dict):
+        raw_future = raw_future["output_0"]
+
+    future_pred_norm = float(raw_future.numpy()[0][0])
 
     future_point = real_full[-1:].copy()
     future_point[:, 3] = future_pred_norm
