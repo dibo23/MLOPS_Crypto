@@ -177,7 +177,14 @@ def main():
 
     # Construction des séquences
     X, y = create_sequences(df, lookback)
-    preds = model(X).numpy().reshape(-1)
+
+    # Appel au modèle TFSMLayer → peut renvoyer un dict {"output_0": tensor}
+    raw = model(X)
+
+    if isinstance(raw, dict):
+        raw = raw["output_0"]
+
+    preds = raw.numpy().reshape(-1)
 
     # Métriques normalisées
     mae = float(np.mean(np.abs(preds - y)))
