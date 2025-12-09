@@ -73,7 +73,7 @@ def get_pred_vs_true_plot(model: tf.keras.Model, ds_test: tf.data.Dataset, sampl
         if len(y_true) >= sample_size:
             break
         y_true.append(y_batch.numpy())
-        y_pred.append(model.predict(x_batch, verbose=0))
+        y_pred.append(model(x_batch)["output_0"].numpy())
 
     y_true = np.concatenate(y_true)[:sample_size].flatten()
     y_pred = np.concatenate(y_pred)[:sample_size].flatten()
@@ -209,9 +209,21 @@ def main() -> None:
     }
 
     # Évaluation brute
-    loss, mae = model.evaluate(ds_test, verbose=0)
+    # TFSMLayer n'a pas evaluate() → on calcule manuellement
+    absolute_errors = []
+    squared_errors = []
 
-    print(f"Validation loss: {loss:.4f}")
+    for x_batch, y_batch in ds_test:
+        preds = model(x_batch)["output_0"].numpy().flatten()  # <- TFSMLayer output key
+        y_true = y_batch.numpy().flatten()
+
+        absolute_errors.extend(np.abs(preds - y_true))
+        squared_errors.extend((preds - y_true) ** 2)
+
+    mae = float(np.mean(absolute_errors))
+    loss = float(np.mean(squared_errors))  # MSE
+
+    print(f"Validation loss (MSE): {loss:.4f}")
     print(f"Validation MAE: {mae:.4f}")
 
     # Sauvegarde des métriques
