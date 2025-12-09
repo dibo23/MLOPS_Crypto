@@ -32,7 +32,7 @@ jobs:
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    # 1) Télécharger modèle + EXTRAIRE le lookback
+    # 1) Télécharger modèle + extraire lookback via model_config.json
     - name: Download model
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
@@ -45,7 +45,7 @@ jobs:
         MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
 
         if [ -z "$MODEL_PATH" ]; then
-          echo "❌ Model folder not found"
+          echo "Model folder not found"
           exit 1
         fi
 
@@ -55,31 +55,18 @@ jobs:
         echo "Downloading model..."
         gsutil -m cp -r "$MODEL_PATH/**" "$MODEL_DIR/"
 
-        echo "Extracting lookback from metrics.json..."
-        LOOKBACK=$(jq ".best_config.lookback" "$MODEL_DIR/metrics.json")
-        echo "LOOKBACK=$LOOKBACK" > lookback.txt
-        echo "Lookback extracted successfully: $LOOKBACK"
+        echo "Extracting lookback from model_config.json..."
+        LOOKBACK=$(jq ".lookback" "$MODEL_DIR/model_config.json")
+        echo "LOOKBACK=$LOOKBACK"
 
+    # 2) Préparation du dataset
     - name: Prepare dataset
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
-        echo "Evaluating RUN_ID=$RUN_ID"
+        echo "Preparing dataset for RUN_ID=$RUN_ID"
 
         mkdir -p data
         mkdir -p data/prepared
-
-        echo "Downloading model metrics..."
-        gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/BTC_USDT_${RUN_ID}_*/metrics.json metrics.json
-
-        echo "Extracting LOOKBACK..."
-        LOOKBACK=$(jq '.best_config.lookback' metrics.json)
-        echo "LOOKBACK = $LOOKBACK"
-
-        if [ -z "$LOOKBACK" ] || [ "$LOOKBACK" = "null" ]; then
-            echo "❌ ERROR: LOOKBACK not found in metrics.json"
-            cat metrics.json
-            exit 1
-        fi
 
         echo "Downloading raw parquet..."
         gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
@@ -91,24 +78,22 @@ jobs:
         df.to_csv("data/raw.csv", index=False)
         EOF
 
-        echo "Running prepare.py with lookback=$LOOKBACK"
-        python3 src/prepare.py --lookback $LOOKBACK data/raw.csv data/prepared
+        echo "Running prepare.py"
+        python3 src/prepare.py data/raw.csv data/prepared
 
-
-
-    # 3) Debug
+    # 3) Debug model files
     - name: Debug model folder
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         ls -R "local_model_${RUN_ID}"
 
-    # 4) Évaluation
+    # 4) Évaluation du modèle
     - name: Evaluate
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         python3 src/evaluate.py "local_model_${RUN_ID}" data/prepared
 
-    # 5) Visualisation
+    # 5) Visualisation du modèle
     - name: Visualize
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
