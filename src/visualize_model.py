@@ -35,7 +35,6 @@ def load_savedmodel_zip(tmp_file):
     # Charge comme un vrai modèle Keras
     return tf.keras.models.load_model(extract_dir)
 
-# Gestion robuste des formats Keras
 def load_model_from_gcs_safely(bucket_name, blob_name):
     print(f"Downloading model from: {blob_name}")
 
@@ -48,19 +47,18 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
     tmp_file = os.path.join(tmp_dir, os.path.basename(blob_name))
     blob.download_to_filename(tmp_file)
 
-    # FORMAT .keras ou .h5  → modèle TensorFlow natif
-    if blob_name.endswith(".keras") or blob_name.endswith(".h5"):
-        print("→ Loading native Keras model (.keras/.h5)")
-        try:
-            return tf.keras.models.load_model(tmp_file)
-        except Exception as e:
-            print("Failed to load native Keras model:", e)
-            raise
+    # IMPORTANT : sur Vertex AI, .keras = archive ZIP SavedModel
+    if blob_name.endswith(".keras"):
+        print("→ .keras detected: loading as ZIP (Vertex AI export format)")
+        return load_savedmodel_zip(tmp_file)
 
-    # FORMAT .zip = SavedModel compressé
     if blob_name.endswith(".zip"):
         print("→ Loading SavedModel ZIP")
         return load_savedmodel_zip(tmp_file)
+
+    if blob_name.endswith(".h5"):
+        print("→ Loading native H5 model")
+        return tf.keras.models.load_model(tmp_file)
 
     raise ValueError(f"Unsupported model format for file: {blob_name}")
 
