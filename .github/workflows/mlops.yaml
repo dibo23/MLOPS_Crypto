@@ -123,14 +123,22 @@ jobs:
 
         python3 src/evaluate.py "$MODEL_DIR" data/prepared
 
-    # 12) Visualisation avancée (preds USD, zoom, future prediction)
+    # 12) Visualisation du modèle
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
+        mkdir -p evaluation/plots_gcs   # OBLIGATOIRE
+        echo "*** DEBUG: Folder before visualize_model.py ***"
+        ls -R evaluation/
+        
         python3 src/visualize_model.py \
           --bucket ${{ secrets.GCS_BUCKET }} \
           --gcs_path ohlcv-data \
           --run_id $RUN_ID
+
+        echo "*** DEBUG: Folder after visualize_model.py ***"
+        ls -R evaluation/
+
 
     # 13) Upload FINAL des graphes (evaluate + visualize_model)
     - name: Upload evaluation plots
