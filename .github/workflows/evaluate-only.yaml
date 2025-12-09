@@ -60,16 +60,28 @@ jobs:
         echo "LOOKBACK=$LOOKBACK" > lookback.txt
         echo "Lookback extracted successfully: $LOOKBACK"
 
-    # 2) Télécharger RAW et préparer avec le bon lookback
     - name: Prepare dataset
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
-        echo "Using LOOKBACK=$LOOKBACK"
+        echo "Evaluating RUN_ID=$RUN_ID"
 
         mkdir -p data
         mkdir -p data/prepared
 
-        echo "Downloading RAW parquet..."
+        echo "Downloading model metrics..."
+        gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/BTC_USDT_${RUN_ID}_*/metrics.json metrics.json
+
+        echo "Extracting LOOKBACK..."
+        LOOKBACK=$(jq '.best_config.lookback' metrics.json)
+        echo "LOOKBACK = $LOOKBACK"
+
+        if [ -z "$LOOKBACK" ] || [ "$LOOKBACK" = "null" ]; then
+            echo "❌ ERROR: LOOKBACK not found in metrics.json"
+            cat metrics.json
+            exit 1
+        fi
+
+        echo "Downloading raw parquet..."
         gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
 
         echo "Converting parquet -> CSV..."
@@ -79,8 +91,10 @@ jobs:
         df.to_csv("data/raw.csv", index=False)
         EOF
 
-        echo "Running prepare.py with correct lookback..."
+        echo "Running prepare.py with lookback=$LOOKBACK"
         python3 src/prepare.py --lookback $LOOKBACK data/raw.csv data/prepared
+
+
 
     # 3) Debug
     - name: Debug model folder
