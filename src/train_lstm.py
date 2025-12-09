@@ -262,4 +262,17 @@ np.save("history.npy", history)
 bucket.blob(f"{model_dir}/history.npy").upload_from_filename("history.npy")
 os.remove("history.npy")
 
-print("Training completed successfully.")
+# Sauvegarde de la configuration du modèle (lookback, n_features)
+model_config = {
+    "lookback": best_config["lookback"],
+    "n_features": 5
+}
+
+config_local_path = "model_config.json"
+with open(config_local_path, "w") as f:
+    json.dump(model_config, f, indent=2)
+
+bucket.blob(f"{model_dir}/model_config.json").upload_from_filename(config_local_path)
+os.remove(config_local_path)
+
+print("Saved model_config.json")
