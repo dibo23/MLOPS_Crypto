@@ -6,6 +6,7 @@ import tensorflow as tf
 import pandas as pd
 import yaml
 import os
+import argparse
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from utils.seed import set_seed
@@ -42,7 +43,7 @@ def load_dataset_from_csv(csv_path: Path, test_split: float, seed: int, lookback
     X = df[numeric_cols].values.astype("float32")
     y = df["close"].values.astype("float32")
 
-    # Normalisation IDENTIQUE à fetch_and_train.py
+    # Normalisation
     scaler = MinMaxScaler()
     X_scaled = scaler.fit_transform(X)
 
@@ -58,21 +59,28 @@ def load_dataset_from_csv(csv_path: Path, test_split: float, seed: int, lookback
 
     return df, ds_train, ds_test, numeric_cols, scaler
 
+
 def main():
-    if len(sys.argv) != 3:
-        print("Arguments error. Usage:\n")
-        print("\tpython3 prepare.py <dataset.csv> <prepared-dataset-folder>\n")
-        exit(1)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lookback", type=int, required=False)
+    parser.add_argument("csv_path")
+    parser.add_argument("output_folder")
+    args = parser.parse_args()
 
     ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
     PARAMS_PATH = os.path.join(ROOT_DIR, "params.yaml")
     prepare_params = yaml.safe_load(open(PARAMS_PATH))["prepare"]
 
-    csv_path = Path(sys.argv[1])
-    prepared_dataset_folder = Path(sys.argv[2])
+    csv_path = Path(args.csv_path)
+    prepared_dataset_folder = Path(args.output_folder)
+
     seed = prepare_params.get("seed", 42)
     split = prepare_params.get("split", 0.2)
-    lookback = prepare_params.get("lookback", 30)
+
+    # ⚠️ Choix du lookback :
+    # - si fourni via CLI → priorité
+    # - sinon fallback config YAML
+    lookback = args.lookback if args.lookback is not None else prepare_params.get("lookback", 30)
 
     set_seed(seed)
 
@@ -82,15 +90,12 @@ def main():
 
     prepared_dataset_folder.mkdir(parents=True, exist_ok=True)
 
-    # Aperçu
     preview_plot = get_preview_plot(df)
     preview_plot.savefig(prepared_dataset_folder / "preview.png")
 
-    # Sauvegarde des datasets
     tf.data.Dataset.save(ds_train, str(prepared_dataset_folder / "train"))
     tf.data.Dataset.save(ds_test, str(prepared_dataset_folder / "test"))
 
-    # Sauvegarde du scaler utilisé
     import joblib
     joblib.dump(scaler, prepared_dataset_folder / "scaler.pkl")
 
@@ -104,7 +109,8 @@ def main():
     with open(prepared_dataset_folder / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
-    print(f"\nDonnées préparées dans {prepared_dataset_folder.absolute()}")
+    print(f"\nDonnées préparées avec lookback={lookback} dans {prepared_dataset_folder.absolute()}")
+
 
 if __name__ == "__main__":
     main()
