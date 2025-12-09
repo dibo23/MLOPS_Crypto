@@ -43,7 +43,7 @@ jobs:
       run: |
         RUN_ID=$(date +%s)
         echo "$RUN_ID" > run_id.txt
-        # ⚠️ Le bon format → BTC/USDT
+        # Le bon format → BTC/USDT
         python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC/USDT
 
     # 8) Création du job Vertex
