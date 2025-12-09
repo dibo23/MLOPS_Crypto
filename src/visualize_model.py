@@ -53,7 +53,7 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
         print("→ Loading SavedModel ZIP via TFSMLayer")
         return load_savedmodel_zip(tmp_file)
 
-    # 2) Vertex génère .keras qui est en réalité un SavedModel compressé
+    # 2) Vertex .keras = SavedModel compressé
     if blob_name.endswith(".keras"):
         print("→ Loading .keras (Vertex) as SavedModel ZIP")
         return load_savedmodel_zip(tmp_file)
@@ -101,46 +101,42 @@ def find_model_file(bucket_name, model_folder):
 
     blobs = list(bucket.list_blobs(prefix=model_folder + "/"))
 
-    # 1) Toujours charger en priorité le ZIP (format officiel Vertex)
     zip_files = [b.name for b in blobs if b.name.endswith(".zip")]
     if zip_files:
         print("Detected ZIP SavedModel:", zip_files[0])
         return zip_files[0]
 
-    # 2) Sinon .keras → doit être chargé comme ZIP
     keras_files = [b.name for b in blobs if b.name.endswith(".keras")]
     if keras_files:
         print("Detected Vertex .keras model:", keras_files[0])
         return keras_files[0]
 
-    # 3) Fallback H5
     h5_files = [b.name for b in blobs if b.name.endswith(".h5")]
     if h5_files:
         print("Detected H5 model:", h5_files[0])
         return h5_files[0]
 
-    raise FileNotFoundError(
-        f"Aucun fichier modèle (.zip, .keras ou .h5) trouvé dans {model_folder}"
-    )
+    raise FileNotFoundError(f"Aucun fichier modèle trouvé dans {model_folder}")
 
-# Chargement du modèle + scaler + dataset associé
+# Chargement du modèle + scaler + dataset + config
 def load_artifacts_gcs(bucket_name, base_path, run_id=None):
     model_folder = get_model_folder(bucket_name, base_path, run_id)
 
-    # Trouve le fichier modèle correct
     model_blob = find_model_file(bucket_name, model_folder)
-
-    # Charge le modèle (format auto-détecté)
     model = load_model_from_gcs_safely(bucket_name, model_blob)
 
-    # Charger scaler et dataset
     scaler_blob = f"{model_folder}/scaler.pkl"
     parquet_blob = f"{model_folder}/train_data.parquet"
+    config_blob = f"{model_folder}/model_config.json"
 
     scaler = joblib.load(io.BytesIO(load_from_gcs(bucket_name, scaler_blob)))
     df = pd.read_parquet(io.BytesIO(load_from_gcs(bucket_name, parquet_blob)))
 
-    return model, df, scaler, model_folder
+    # Chargement automatique du lookback et n_features
+    config_bytes = load_from_gcs(bucket_name, config_blob)
+    config = json.loads(config_bytes.decode("utf-8"))
+
+    return model, df, scaler, config, model_folder
 
 # Construction des séquences LSTM
 def create_sequences(df, lookback):
@@ -161,18 +157,14 @@ def main():
     args = parser.parse_args()
 
     print("\n=== Loading artifacts from GCS ===")
-    model, df, scaler, model_folder = load_artifacts_gcs(
-        args.bucket, args.gcs_path, run_id=args.run_id
+    model, df, scaler, config, model_folder = load_artifacts_gcs(
+        args.bucket, args.gcs_path, args.run_id
     )
 
-    # AUTO-DETECTION DU LOOKBACK ET NB FEATURES
-    sig = model.signatures["serving_default"]
-    input_dict = sig.structured_input_signature[1]
-    input_key = list(input_dict.keys())[0]
-    input_shape = input_dict[input_key].shape
-
-    lookback = input_shape[1]
-    n_features = input_shape[2]
+    # Lookback / features détectés automatiquement via model_config.json
+    lookback = config["lookback"]
+    n_features = config["n_features"]
+    print(f"Loaded model config: lookback={lookback}, n_features={n_features}")
 
     run_id = os.path.basename(model_folder)
     out_dir = os.path.join("evaluation", "plots_gcs", run_id)
@@ -224,7 +216,6 @@ def main():
     delta_t = dates[-1] - dates[-2]
     future_time = dates[-1] + delta_t
 
-    # Texte résumé
     metric_text = (
         f"MAE (norm): {mae:.4f}\n"
         f"RMSE (norm): {rmse:.4f}\n"
@@ -234,11 +225,10 @@ def main():
         f"T+1 pred: {future_usd:.2f} USD"
     )
 
-    # Graphique principal
     plt.figure(figsize=(16, 6))
     plt.plot(dates, real_prices, label="Real")
     plt.plot(dates, pred_prices, label="Prediction")
-    plt.scatter(future_time, future_usd, color="red", s=40, label="t+1 prediction")
+    plt.scatter(future_time, future_usd, s=40, label="t+1 prediction")
 
     plt.gca().text(
         0.02, 0.98, metric_text,
@@ -257,7 +247,7 @@ def main():
     plt.figure(figsize=(16, 6))
     plt.plot(dates[-zoom:], real_prices[-zoom:], label="Real")
     plt.plot(dates[-zoom:], pred_prices[-zoom:], label="Prediction")
-    plt.scatter(future_time, future_usd, color="red", s=40)
+    plt.scatter(future_time, future_usd, s=40)
 
     plt.gca().text(
         0.02, 0.98, metric_text,
@@ -272,7 +262,6 @@ def main():
     plt.savefig(os.path.join(out_dir, "preds_usd_zoom_200.png"))
     plt.close()
 
-    # Sauvegarde de la prédiction future
     with open(os.path.join(out_dir, "future_prediction.txt"), "w") as f:
         f.write(f"{future_time}, {future_usd}")
 
