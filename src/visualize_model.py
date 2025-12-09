@@ -48,17 +48,21 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
     tmp_file = os.path.join(tmp_dir, os.path.basename(blob_name))
     blob.download_to_filename(tmp_file)
 
-    # Format .keras ou .h5
-    if blob_name.endswith(".h5") or blob_name.endswith(".keras"):
-        print("→ Loading Keras model file")
-        return tf.keras.models.load_model(tmp_file)
+    # FORMAT .keras ou .h5  → modèle TensorFlow natif
+    if blob_name.endswith(".keras") or blob_name.endswith(".h5"):
+        print("→ Loading native Keras model (.keras/.h5)")
+        try:
+            return tf.keras.models.load_model(tmp_file)
+        except Exception as e:
+            print("Failed to load native Keras model:", e)
+            raise
 
-    # Format zip = SavedModel ZIP
+    # FORMAT .zip = SavedModel compressé
     if blob_name.endswith(".zip"):
         print("→ Loading SavedModel ZIP")
         return load_savedmodel_zip(tmp_file)
 
-    raise ValueError("Unsupported model format.")
+    raise ValueError(f"Unsupported model format for file: {blob_name}")
 
 # Recherche du dossier modèle (avec RUN_ID facultatif)
 def get_model_folder(bucket_name, base_path, run_id=None):
