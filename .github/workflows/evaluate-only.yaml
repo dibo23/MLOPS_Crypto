@@ -16,6 +16,9 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
+    - name: Install jq
+      run: sudo apt-get install -y jq
+
     - name: Auth Google Cloud
       uses: google-github-actions/auth@v2
       with:
@@ -29,33 +32,11 @@ jobs:
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    # 1) Télécharger dataset RAW + prepare.py
-    - name: Prepare dataset
-      run: |
-        RUN_ID="${{ github.event.inputs.run_id }}"
-        echo "Evaluating RUN_ID=$RUN_ID"
-
-        mkdir -p data
-        mkdir -p data/prepared
-
-        echo "Downloading RAW parquet..."
-        gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
-
-        echo "Converting parquet -> CSV..."
-        python3 <<EOF
-        import pandas as pd
-        df = pd.read_parquet("data/raw.parquet")
-        df.to_csv("data/raw.csv", index=False)
-        EOF
-
-        echo "Running prepare.py..."
-        python3 src/prepare.py data/raw.csv data/prepared
-
-    # 2) Télécharger modèle depuis GCS
+    # 1) Télécharger modèle + EXTRAIRE le lookback
     - name: Download model
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
-        echo "Downloading model for RUN_ID=$RUN_ID"
+        echo "RUN_ID=$RUN_ID"
 
         MODEL_DIR="local_model_${RUN_ID}"
         mkdir -p $MODEL_DIR
@@ -64,29 +45,56 @@ jobs:
         MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
 
         if [ -z "$MODEL_PATH" ]; then
-          echo "❌ Model folder not found for RUN_ID=$RUN_ID"
+          echo "❌ Model folder not found"
           exit 1
         fi
 
         MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
-        echo "Found model path: $MODEL_PATH"
+        echo "Found model: $MODEL_PATH"
 
-        echo "Downloading model content..."
+        echo "Downloading model..."
         gsutil -m cp -r "$MODEL_PATH/**" "$MODEL_DIR/"
 
+        echo "Extracting lookback from metrics.json..."
+        LOOKBACK=$(jq ".best_config.lookback" "$MODEL_DIR/metrics.json")
+        echo "LOOKBACK=$LOOKBACK" > lookback.txt
+        echo "Lookback extracted successfully: $LOOKBACK"
+
+    # 2) Télécharger RAW et préparer avec le bon lookback
+    - name: Prepare dataset
+      run: |
+        RUN_ID="${{ github.event.inputs.run_id }}"
+        echo "Using LOOKBACK=$LOOKBACK"
+
+        mkdir -p data
+        mkdir -p data/prepared
+
+        echo "Downloading RAW parquet..."
+        gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
+
+        echo "Converting parquet -> CSV..."
+        python3 - <<EOF
+        import pandas as pd
+        df = pd.read_parquet("data/raw.parquet")
+        df.to_csv("data/raw.csv", index=False)
+        EOF
+
+        echo "Running prepare.py with correct lookback..."
+        python3 src/prepare.py --lookback $LOOKBACK data/raw.csv data/prepared
+
+    # 3) Debug
     - name: Debug model folder
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         ls -R "local_model_${RUN_ID}"
 
-    # 3) Évaluation — compatible avec evaluate.py VERSION TFRecord
+    # 4) Évaluation
     - name: Evaluate
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
-        echo "Running evaluate.py..."
         python3 src/evaluate.py "local_model_${RUN_ID}" data/prepared
 
-    # 4) Visualisation du modèle exporté sur GCS
+    # 5) Visualisation
     - name: Visualize
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
@@ -95,7 +103,7 @@ jobs:
           --gcs_path "ohlcv-data" \
           --run_id "$RUN_ID"
 
-    # 5) Upload résultats
+    # 6) Upload des plots
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
