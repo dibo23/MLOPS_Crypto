@@ -98,23 +98,26 @@ def find_model_file(bucket_name, model_folder):
 
     blobs = list(bucket.list_blobs(prefix=model_folder + "/"))
 
-    h5_files = [b.name for b in blobs if b.name.endswith(".h5")]
-    if h5_files:
-        print("Detected H5 model file:", h5_files[0])
-        return h5_files[0]
-
-    keras_files = [b.name for b in blobs if b.name.endswith(".keras")]
-    if keras_files:
-        print("Detected .keras model file:", keras_files[0])
-        return keras_files[0]
-
+    # 1) Toujours essayer d'abord le SavedModel ZIP
     zip_files = [b.name for b in blobs if b.name.endswith(".zip")]
     if zip_files:
         print("Detected ZIP SavedModel:", zip_files[0])
         return zip_files[0]
 
+    # 2) Si pas de ZIP, utiliser .keras (rare)
+    keras_files = [b.name for b in blobs if b.name.endswith(".keras")]
+    if keras_files:
+        print("Detected .keras Keras model:", keras_files[0])
+        return keras_files[0]
+
+    # 3) Si pas de .keras, fallback .h5
+    h5_files = [b.name for b in blobs if b.name.endswith(".h5")]
+    if h5_files:
+        print("Detected H5 model:", h5_files[0])
+        return h5_files[0]
+
     raise FileNotFoundError(
-        f"Aucun fichier modèle (.h5, .keras ou .zip) trouvé dans {model_folder}"
+        f"Aucun fichier modèle (.zip, .keras ou .h5) trouvé dans {model_folder}"
     )
 
 # Chargement du modèle + scaler + dataset associé
