@@ -77,7 +77,7 @@ def main():
     seed = prepare_params.get("seed", 42)
     split = prepare_params.get("split", 0.2)
 
-    # ⚠️ Choix du lookback :
+    # Choix du lookback :
     # - si fourni via CLI → priorité
     # - sinon fallback config YAML
     lookback = args.lookback if args.lookback is not None else prepare_params.get("lookback", 30)
