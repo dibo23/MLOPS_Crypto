@@ -1,6 +1,8 @@
 name: Vertex MLOps Pipeline
  
 on:
+  push:
+    branches: ["main"]
   workflow_dispatch: {}
 
 jobs:
@@ -33,15 +35,15 @@ jobs:
       run: gsutil cp src.tar.gz gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz
 
     # 6) Install deps localement
-    - name: Install dependencies
+    - name: Install dependencies locally
       run: pip install -r requirements.txt
 
-    # 7) Fetch dataset + upload
+    # 7) Fetch dataset (local) + upload parquet
     - name: Fetch & prepare dataset
       run: |
         RUN_ID=$(date +%s)
         echo "$RUN_ID" > run_id.txt
-        python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC/USDT
+        python3 src/fetch_and_train.py --run_id $RUN_ID --pair BTC_USDT
 
     # 8) Création du job Vertex
     - name: Launch Vertex AI Job
@@ -51,9 +53,9 @@ jobs:
 
         JOB_ID=$(gcloud ai custom-jobs create \
           --region=${{ secrets.VERTEX_REGION }} \
-          --display-name="train-${RUN_ID}" \
+          --display-name="train-$RUN_ID" \
           --python-package-uris=gs://${{ secrets.GCS_BUCKET }}/code/src.tar.gz \
-          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=MLOPS_Crypto.train_lstm \
+          --worker-pool-spec=machine-type=e2-standard-4,executor-image-uri=us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-11:latest,python-module=src.train_lstm \
           --args=--data_prefix=gs://${{ secrets.GCS_BUCKET }}/ohlcv-data \
           --args=--pair=BTC_USDT \
           --args=--run_id=$RUN_ID \
@@ -62,7 +64,7 @@ jobs:
         echo "$JOB_ID" > job_id.txt
         echo "Launched job: $JOB_ID"
 
-    # 9) Attente fixe 16 minutes
+    # 9) Attente fixe 16 minutes (nécessaire pour Vertex)
     - name: Wait for Vertex AI Training Job
       run: |
         echo "Waiting 16 minutes to let Vertex finish training..."
@@ -72,48 +74,7 @@ jobs:
         done
         echo "Done waiting. Continuing pipeline."
 
-    # 10) Dépendances locales pour evaluate
-    - name: Install local dependencies (evaluate)
-      run: pip install -r requirements.txt
-
-    # 10.5) Préparer dataset pour evaluate.py
-    - name: Prepare dataset for evaluate.py
-      run: |
-        RUN_ID=$(cat run_id.txt)
-        mkdir -p data
-        mkdir -p data/prepared 
-
-        # Télécharger le RAW parquet depuis GCS
-        gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
-
-        # Convertir parquet → CSV
-        python3 -c "import pandas as pd; df=pd.read_parquet('data/raw.parquet'); df.to_csv('data/raw.csv', index=False)"
-
-        # Préparer dataset TensorFlow
-        python3 src/prepare.py data/raw.csv data/prepared
-
-    # 11) Évaluation du modèle
-    - name: Evaluate trained model
-      run: |
-        RUN_ID=$(cat run_id.txt)
-        MODEL_DIR="local_model_${RUN_ID}"
-        mkdir -p $MODEL_DIR
-
-        MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
-        if [ -z "$MODEL_PATH" ]; then
-          echo "Model folder not found in GCS!"
-          exit 1
-        fi
-
-        echo "Found model folder: $MODEL_PATH"
-
-        MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
-
-        gsutil cp -r "${MODEL_PATH}/*" "$MODEL_DIR/"
-
-        python3 src/evaluate.py $MODEL_DIR data/prepared
-
-    # 12) Visualisation du modèle
+    # 10) Visualisation du modèle via GCS
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -122,7 +83,7 @@ jobs:
           --gcs_path ohlcv-data \
           --run_id $RUN_ID
 
-    # 13) Upload des graphes
+    # 11) Upload des graphes
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:

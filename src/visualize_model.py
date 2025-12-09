@@ -201,17 +201,6 @@ def main():
     pred_prices = scaler.inverse_transform(pred_full)[:, 3]
     dates = df.index[lookback:]
 
-    mape = float(np.mean(np.abs((real_prices - pred_prices) / real_prices)) * 100)
-
-    # Sauvegarde métriques
-    with open(os.path.join(out_dir, "metrics.json"), "w") as f:
-        json.dump({
-            "mae_normalized": mae,
-            "mse_normalized": mse,
-            "rmse_normalized": rmse,
-            "mape_usd": mape
-        }, f, indent=4)
-
     # Prédiction t+1
     last_seq = features_full[-lookback:].reshape(1, lookback, n_features)
 
@@ -228,20 +217,46 @@ def main():
     delta_t = dates[-1] - dates[-2]
     future_time = dates[-1] + delta_t
 
+    # MAE / RMSE en USD (pas en normalisé)
+    mae_usd = float(np.mean(np.abs(pred_prices - real_prices)))
+    rmse_usd = float(np.sqrt(np.mean((pred_prices - real_prices) ** 2)))
+
+    # Eviter division par zéro pour MAPE
+    valid = real_prices != 0
+
+    # MAPE corrigé (sans valeurs real = 0)
+    mape = float(np.mean(np.abs((real_prices[valid] - pred_prices[valid]) / real_prices[valid])) * 100)
+
+    # Sauvegarde métriques APRÈS calcul du MAPE correct
+    with open(os.path.join(out_dir, "metrics.json"), "w") as f:
+        json.dump({
+            "mae_usd": mae_usd,
+            "rmse_usd": rmse_usd,
+            "mape_usd": mape,
+            "mae_normalized": mae,
+            "mse_normalized": mse,
+            "rmse_normalized": rmse
+        }, f, indent=4)
+
+    # Texte métrique mis à jour (USD + lisible)
     metric_text = (
-        f"MAE (norm): {mae:.4f}\n"
-        f"RMSE (norm): {rmse:.4f}\n"
+        f"MAE (USD): {mae_usd:.4f}\n"
+        f"RMSE (USD): {rmse_usd:.4f}\n"
         f"MAPE (USD): {mape:.2f}%\n\n"
         f"Last real: {real_prices[-1]:.2f} USD\n"
         f"Last pred: {pred_prices[-1]:.2f} USD\n"
         f"T+1 pred: {future_usd:.2f} USD"
     )
 
+    # COURBE PRINCIPALE
     plt.figure(figsize=(16, 6))
-    plt.plot(dates, real_prices, label="Real")
-    plt.plot(dates, pred_prices, label="Prediction")
-    plt.scatter(future_time, future_usd, s=40, label="t+1 prediction")
+    plt.plot(dates, real_prices, label="Real Price (USD)")
+    plt.plot(dates, pred_prices, label="Prediction (USD)")
 
+    # Point t+1
+    plt.scatter(future_time, future_usd, s=60, color="red", label="T+1 prediction")
+
+    # Encadré avec métriques
     plt.gca().text(
         0.02, 0.98, metric_text,
         transform=plt.gca().transAxes,
@@ -249,17 +264,21 @@ def main():
         bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="black", alpha=0.7)
     )
 
+    plt.legend()
     plt.xticks(rotation=45)
     plt.title("Predictions vs Real (USD)")
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, "preds_usd.png"))
     plt.close()
 
+    # ZOOM 200
     zoom = 200
     plt.figure(figsize=(16, 6))
-    plt.plot(dates[-zoom:], real_prices[-zoom:], label="Real")
-    plt.plot(dates[-zoom:], pred_prices[-zoom:], label="Prediction")
-    plt.scatter(future_time, future_usd, s=40)
+    plt.plot(dates[-zoom:], real_prices[-zoom:], label="Real Price (USD)")
+    plt.plot(dates[-zoom:], pred_prices[-zoom:], label="Prediction (USD)")
+
+    # t+1 encore visible
+    plt.scatter(future_time, future_usd, s=60, color="red", label="T+1 prediction")
 
     plt.gca().text(
         0.02, 0.98, metric_text,
@@ -268,16 +287,15 @@ def main():
         bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="black", alpha=0.7)
     )
 
+    plt.legend()
     plt.xticks(rotation=45)
     plt.title("Zoom last 200 points")
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, "preds_usd_zoom_200.png"))
     plt.close()
 
+    # Sauvegarde texte future prediction
     with open(os.path.join(out_dir, "future_prediction.txt"), "w") as f:
         f.write(f"{future_time}, {future_usd}")
 
     print("\nEvaluation saved to:", out_dir)
-
-if __name__ == "__main__":
-    main()
