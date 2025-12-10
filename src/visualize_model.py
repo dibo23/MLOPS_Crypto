@@ -313,3 +313,8 @@ def main():
         f.write(f"{future_time}, {future_usd}")
 
     print("\nEvaluation saved to:", out_dir)
+
+
+if __name__ == "__main__":
+    main()
+
