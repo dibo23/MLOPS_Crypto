@@ -107,6 +107,9 @@ jobs:
         echo "*** AFTER VISUALIZE ***"
         ls -R evaluation/
 
+        echo "*** AFTER VISUALIZE (deep list) ***"
+        find evaluation -maxdepth 3 -type f
+
     # 6) Upload final
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
