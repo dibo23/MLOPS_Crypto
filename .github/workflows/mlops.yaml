@@ -65,12 +65,12 @@ jobs:
         echo "$JOB_ID" > job_id.txt
         echo "Launched job: $JOB_ID"
 
-    # 9) Attendre Vertex (16 min)
+    # 9) Attendre Vertex (240 min)
     - name: Wait for Vertex AI Training Job
       run: |
-        echo "Waiting 16 minutes while Vertex trains..."
-        for i in {1..16}; do
-          echo "Minute $i/16..."
+        echo "Waiting 240 minutes while Vertex trains..."
+        for i in {1..240}; do
+          echo "Minute $i/240..."
           sleep 60
         done
         echo "Training should now be finished."
