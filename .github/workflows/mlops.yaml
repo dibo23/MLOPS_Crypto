@@ -79,7 +79,31 @@ jobs:
     - name: Install local dependencies (evaluate)
       run: pip install -r requirements.txt
 
-    # 10.5) Préparer dataset pour evaluate.py
+
+    # 10.5) Télécharger modèle AVANT prepare.py
+    - name: Download trained model for lookback sync
+      run: |
+        RUN_ID=$(cat run_id.txt)
+        MODEL_DIR="local_model_${RUN_ID}"
+        mkdir -p "$MODEL_DIR"
+
+        echo "Searching model folder..."
+        MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
+
+        if [ -z "$MODEL_PATH" ]; then
+          echo "Model folder not found for RUN_ID=$RUN_ID"
+          exit 1
+        fi
+
+        MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
+        echo "Found model: $MODEL_PATH"
+
+        gsutil -m cp -r "$MODEL_PATH/*" "$MODEL_DIR/"
+
+        echo "Model downloaded. Ready to sync lookback."
+
+
+    # 11) Préparer dataset AVEC sync lookback
     - name: Prepare dataset for evaluate.py
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -93,37 +117,16 @@ jobs:
         df.to_csv("data/raw.csv", index=False)
         EOF
 
-        python3 src/prepare.py data/raw.csv data/prepared
+        python3 src/prepare.py data/raw.csv data/prepared --model_dir "local_model_${RUN_ID}"
 
-    # 11) DEBUG GCS + téléchargement du modèle + evaluate.py
+    # 12) Evaluate model BEFORE visualization
     - name: Evaluate trained model
       run: |
         RUN_ID=$(cat run_id.txt)
-        MODEL_DIR="local_model_${RUN_ID}"
-        mkdir -p "$MODEL_DIR"
+        python3 src/evaluate.py "local_model_${RUN_ID}" data/prepared
 
-        echo "*** DEBUG 1: Listing model folders in GCS ***"
-        gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/
 
-        MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
-
-        if [ -z "$MODEL_PATH" ]; then
-          echo "Model folder not found for RUN_ID=$RUN_ID"
-          exit 1
-        fi
-
-        MODEL_PATH=$(echo "$MODEL_PATH" | sed 's:/*$::')
-        echo "Found model folder: $MODEL_PATH"
-
-        echo "*** DEBUG 2: Downloading model content ***"
-        gsutil -m cp -r "$MODEL_PATH/*" "$MODEL_DIR/"
-
-        echo "*** DEBUG 3: Local model folder content ***"
-        ls -R "$MODEL_DIR"
-
-        python3 src/evaluate.py "$MODEL_DIR" data/prepared
-
-    # 12) Visualisation du modèle
+    # 13) Visualisation du modèle
     - name: Visualize trained model
       run: |
         RUN_ID=$(cat run_id.txt)
@@ -140,7 +143,7 @@ jobs:
         ls -R evaluation/
 
 
-    # 13) Upload FINAL des graphes (evaluate + visualize_model)
+    # 14) Upload FINAL des graphes (evaluate + visualize_model)
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
@@ -148,3 +151,4 @@ jobs:
         path: |
           evaluation/**
           evaluation/plots_gcs/**
+

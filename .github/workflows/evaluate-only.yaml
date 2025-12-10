@@ -32,16 +32,16 @@ jobs:
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    # 1) Télécharger modèle + extraire lookback via model_config.json
+    # 1) Télécharger modèle + lookback
     - name: Download model
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         echo "RUN_ID=$RUN_ID"
 
         MODEL_DIR="local_model_${RUN_ID}"
-        mkdir -p $MODEL_DIR
+        mkdir -p "$MODEL_DIR"
 
-        echo "Searching model folder in GCS..."
+        echo "Searching model folder..."
         MODEL_PATH=$(gsutil ls gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/models/ | grep "BTC_USDT_${RUN_ID}_")
 
         if [ -z "$MODEL_PATH" ]; then
@@ -53,58 +53,65 @@ jobs:
         echo "Found model: $MODEL_PATH"
 
         echo "Downloading model..."
-        gsutil -m cp -r "$MODEL_PATH/**" "$MODEL_DIR/"
+        gsutil -m cp -r "$MODEL_PATH/*" "$MODEL_DIR/"
 
-        echo "Extracting lookback from model_config.json..."
+        echo "Extracting lookback..."
         LOOKBACK=$(jq ".lookback" "$MODEL_DIR/model_config.json")
         echo "LOOKBACK=$LOOKBACK"
 
-    # 2) Préparation du dataset
+    # 2) Préparation du dataset avec lookback synchronisé
     - name: Prepare dataset
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         echo "Preparing dataset for RUN_ID=$RUN_ID"
 
-        mkdir -p data
-        mkdir -p data/prepared
+        mkdir -p data data/prepared
 
-        echo "Downloading raw parquet..."
         gsutil cp gs://${{ secrets.GCS_BUCKET }}/ohlcv-data/BTC_USDT_raw_${RUN_ID}.parquet data/raw.parquet
 
-        echo "Converting parquet -> CSV..."
-        python3 - <<EOF
+        python3 <<EOF
         import pandas as pd
         df = pd.read_parquet("data/raw.parquet")
         df.to_csv("data/raw.csv", index=False)
         EOF
 
-        echo "Running prepare.py"
-        python3 src/prepare.py data/raw.csv data/prepared
+        python3 src/prepare.py data/raw.csv data/prepared --model_dir "local_model_${RUN_ID}"
 
-    # 3) Debug model files
+    # 3) Debug
     - name: Debug model folder
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         ls -R "local_model_${RUN_ID}"
 
-    # 4) Évaluation du modèle
+    # 4) Evaluate
     - name: Evaluate
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
         python3 src/evaluate.py "local_model_${RUN_ID}" data/prepared
 
-    # 5) Visualisation du modèle
+    # 5) Visualize (plots_gcs correctement créés)
     - name: Visualize
       run: |
         RUN_ID="${{ github.event.inputs.run_id }}"
+
+        mkdir -p evaluation/plots_gcs
+
+        echo "*** BEFORE VISUALIZE ***"
+        ls -R evaluation/
+
         python3 src/visualize_model.py \
           --bucket "${{ secrets.GCS_BUCKET }}" \
           --gcs_path "ohlcv-data" \
           --run_id "$RUN_ID"
 
-    # 6) Upload des plots
+        echo "*** AFTER VISUALIZE ***"
+        ls -R evaluation/
+
+    # 6) Upload final
     - name: Upload evaluation plots
       uses: actions/upload-artifact@v4
       with:
         name: evaluation-plots
-        path: evaluation/
+        path: |
+          evaluation/**
+

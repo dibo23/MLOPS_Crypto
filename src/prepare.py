@@ -33,6 +33,25 @@ def create_lstm_sequences(X, y, lookback):
         tf.convert_to_tensor(sequences_y, dtype=tf.float32)
     )
 
+
+# NEW — charge automatiquement le lookback depuis local_model_<RUN_ID>/model_config.json
+def load_lookback_from_model_dir(model_dir: str):
+    config_path = Path(model_dir) / "model_config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"model_config.json not found in {config_path}")
+
+    with open(config_path, "r") as f:
+        config = json.load(f)
+
+    if "lookback" not in config:
+        raise ValueError("lookback missing from model_config.json")
+
+    lookback = int(config["lookback"])
+    print(f"[INFO] Auto-detected lookback={lookback} from model_config.json")
+    return lookback
+# END NEW
+
+
 def load_dataset_from_csv(csv_path: Path, test_split: float, seed: int, lookback: int):
     df = pd.read_csv(csv_path)
 
@@ -63,6 +82,12 @@ def load_dataset_from_csv(csv_path: Path, test_split: float, seed: int, lookback
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--lookback", type=int, required=False)
+
+    # NEW — permet d'indiquer où trouver le model_config.json
+    parser.add_argument("--model_dir", type=str, required=False,
+                        help="Path to local_model_<RUN_ID> to auto-load lookback")
+    # END NEW
+
     parser.add_argument("csv_path")
     parser.add_argument("output_folder")
     args = parser.parse_args()
@@ -77,10 +102,17 @@ def main():
     seed = prepare_params.get("seed", 42)
     split = prepare_params.get("split", 0.2)
 
-    # Choix du lookback :
-    # - si fourni via CLI → priorité
-    # - sinon fallback config YAML
-    lookback = args.lookback if args.lookback is not None else prepare_params.get("lookback", 30)
+    # NEW — priorité:
+    # 1) --lookback CLI
+    # 2) model_config.json si --model_dir
+    # 3) params.yaml sinon
+    if args.lookback is not None:
+        lookback = args.lookback
+    elif args.model_dir:
+        lookback = load_lookback_from_model_dir(args.model_dir)
+    else:
+        lookback = prepare_params.get("lookback", 30)
+    # END NEW
 
     set_seed(seed)
 
