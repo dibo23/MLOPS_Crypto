@@ -6,10 +6,7 @@ feeder:
   output_path: "ohlcv-data"    # Subfolder inside the bucket (optional)
 
 training:
-  epochs: 2
-  batch_size: 128
-  lookback: 30                 # Number of candles fed into the LSTM
-  features: ["close"]
+  features: ["open", "high", "low", "close", "volume"]   # cohérent avec visualize & evaluate
   target: "close"
 
 prepare:

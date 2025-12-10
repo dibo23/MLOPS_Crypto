@@ -1,6 +1,8 @@
 name: Vertex MLOps Pipeline
-
+ 
 on:
+  push:
+    branches: ["main"]
   workflow_dispatch: {}
 
 jobs:
@@ -140,6 +142,8 @@ jobs:
         echo "*** DEBUG: Folder after visualize_model.py ***"
         ls -R evaluation/
 
+        echo "*** AFTER VISUALIZE (deep list) ***"
+        find evaluation -maxdepth 3 -type f
 
     # 14) Upload FINAL des graphes (evaluate + visualize_model)
     - name: Upload evaluation plots
