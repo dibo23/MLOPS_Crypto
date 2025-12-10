@@ -161,6 +161,25 @@ def main():
         args.bucket, args.gcs_path, args.run_id
     )
 
+    # REPLACE DATAFRAME WITH RAW DATA
+    print("Loading RAW data for this RUN_ID...")
+
+    raw_blob = f"{args.gcs_path}/BTC_USDT_raw_{args.run_id}.parquet"
+
+    raw_bytes = load_from_gcs(args.bucket, raw_blob)
+    raw_df = pd.read_parquet(io.BytesIO(raw_bytes))
+
+    # Replace df from train_data.parquet with real raw data
+    df = raw_df.copy()
+
+    # Ensure timestamp exists and sorted
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        df = df.set_index("timestamp")
+
+    print("RAW dataset loaded:", df.shape)
+
     # Lookback / features détectés automatiquement via model_config.json
     lookback = config["lookback"]
     n_features = config["n_features"]
@@ -169,11 +188,6 @@ def main():
     run_id = os.path.basename(model_folder)
     out_dir = os.path.join("evaluation", "plots_gcs", run_id)
     ensure_dir(out_dir)
-
-    # Conversion timestamp éventuel
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        df = df.set_index("timestamp")
 
     # Construction des séquences
     X, y = create_sequences(df, lookback)
