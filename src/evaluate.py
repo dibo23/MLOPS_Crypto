@@ -131,12 +131,12 @@ def main():
     lookback = cfg["lookback"]
     print(f"[INFO] Model lookback detected = {lookback}")
 
-    # 2) Load TEST dataset (normalized)
-    test_path = prepared_folder / "test.parquet"
-    if not test_path.exists():
-        raise FileNotFoundError("test.parquet not found — evaluate.py requires df_test normalisé.")
+    # 2) Load RAW CSV restored & synced from prepare.py
+    csv_raw = prepared_folder / "raw.csv"
+    if not csv_raw.exists():
+        raise FileNotFoundError("raw.csv not found — evaluate.py requires raw.csv from prepare.py")
 
-    df = pd.read_parquet(test_path)
+    df = pd.read_csv(csv_raw)
 
     # 3) Load scaler → nécessaire pour cohérence totale
     scaler_file = list(model_folder.glob("scaler.pkl"))
