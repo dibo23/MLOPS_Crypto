@@ -37,7 +37,6 @@ def create_sequences(df, lookback):
 # Direction-based metrics
 # ============================================================
 def compute_direction(arr):
-    """Convert prices to direction: +1 = up, -1 = down."""
     diff = np.diff(arr)
     return np.where(diff >= 0, 1, -1)
 
@@ -83,12 +82,12 @@ def plot_confusion_matrix(y_true_usd, y_pred_usd):
 
 
 # ============================================================
-# Training curve plots
+# Training Plots
 # ============================================================
 def plot_training_history(model_history):
     epochs = range(1, len(model_history) + 1)
     fig = plt.figure(figsize=(10, 4))
-    plt.plot(epochs, model_history, label="Validation Loss")
+    plt.plot(epochs, model_history)
     plt.xlabel("Epoch")
     plt.ylabel("Val Loss")
     plt.title("Training History")
@@ -102,7 +101,7 @@ def plot_training_narrative(model_history):
     best_val = float(np.min(model_history))
 
     fig = plt.figure(figsize=(12, 5))
-    plt.plot(epochs, model_history, linewidth=2, label="Val Loss")
+    plt.plot(epochs, model_history, linewidth=2)
     plt.axvline(best_epoch, linestyle="--", color="red", label=f"Best epoch = {best_epoch}")
     plt.axhline(best_val, linestyle="--", color="green", label=f"Best val_loss = {best_val:.4f}")
     plt.legend()
@@ -139,7 +138,7 @@ def plot_early_stopping_signal(model_history, patience):
         no_imp.append(counter)
 
     fig = plt.figure(figsize=(10, 4))
-    plt.plot(no_imp, label="Epochs without improvement")
+    plt.plot(no_imp)
     plt.axhline(patience, color="red", linestyle="--",
                 label=f"EarlyStopping patience={patience}")
     plt.legend()
@@ -162,44 +161,30 @@ def main():
     plots_folder = evaluation_folder / "plots"
     plots_folder.mkdir(parents=True, exist_ok=True)
 
-    # --------------------------------------------------------
     # Load lookback
-    # --------------------------------------------------------
-    config_path = model_folder / "model_config.json"
-    with open(config_path, "r") as f:
-        cfg = json.load(f)
+    cfg = json.load(open(model_folder / "model_config.json"))
     lookback = cfg["lookback"]
 
-    # --------------------------------------------------------
-    # Load raw dataset
-    # --------------------------------------------------------
+    # Load raw.csv
     raw_path = prepared_folder / "raw.csv"
     if not raw_path.exists():
         raw_path = prepared_folder.parent / "raw.csv"
     df = pd.read_csv(raw_path)
 
-    # --------------------------------------------------------
     # Build sequences
-    # --------------------------------------------------------
     X_test, y_test = create_sequences(df, lookback)
 
-    # --------------------------------------------------------
     # Load SavedModel
-    # --------------------------------------------------------
     saved_zip = next(model_folder.glob("saved_model_*.zip"))
     tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
     with zipfile.ZipFile(saved_zip, "r") as z:
         z.extractall(tmpdir)
     model = tf.keras.layers.TFSMLayer(tmpdir, call_endpoint="serving_default")
 
-    # --------------------------------------------------------
-    # Load scaler.pkl
-    # --------------------------------------------------------
+    # Load scaler
     scaler = joblib.load(model_folder / "scaler.pkl")
 
-    # --------------------------------------------------------
     # Predict in USD
-    # --------------------------------------------------------
     preds = model(X_test)
     if isinstance(preds, dict):
         preds = preds["output_0"]
@@ -214,12 +199,9 @@ def main():
     y_pred_usd = scaler.inverse_transform(f_pred)[:, 3][:SAMPLE_SIZE]
     y_true_usd = scaler.inverse_transform(f_true)[:, 3][:SAMPLE_SIZE]
 
-    # --------------------------------------------------------
-    # METRICS
-    # --------------------------------------------------------
+    # Metrics
     mae = float(np.mean(np.abs(y_pred_usd - y_true_usd)))
     mse = float(np.mean((y_pred_usd - y_true_usd) ** 2))
-
     direction = compute_direction_metrics(y_true_usd, y_pred_usd)
 
     all_metrics = {
@@ -227,13 +209,9 @@ def main():
         "mse_usd": mse,
         **direction
     }
+    json.dump(all_metrics, open(evaluation_folder / "metrics.json", "w"), indent=2)
 
-    with open(evaluation_folder / "metrics.json", "w") as f:
-        json.dump(all_metrics, f, indent=2)
-
-    # --------------------------------------------------------
-    # TRAINING HISTORY
-    # --------------------------------------------------------
+    # Training history
     raw_history = np.load(model_folder / "history.npy", allow_pickle=True)
     val_loss_history = [h["val_loss"] for h in raw_history]
 
@@ -244,41 +222,40 @@ def main():
         plots_folder / "early_stopping_signal.png"
     )
 
-    # Confusion Matrix
+    # Confusion matrix
     plot_confusion_matrix(y_true_usd, y_pred_usd).savefig(
         plots_folder / "confusion_matrix.png"
     )
 
-    # --------------------------------------------------------
-    # HYPERPARAMETER ANALYSIS (if all_candidates.json exists)
-    # --------------------------------------------------------
+    # ============================================================
+    # HPO ANALYSIS
+    # ============================================================
     hpo_file = model_folder / "all_candidates.json"
-    hpo_plots_folder = plots_folder / "hpo"
-    hpo_plots_folder.mkdir(parents=True, exist_ok=True)
+    hpo_plots = plots_folder / "hpo"
+    hpo_plots.mkdir(parents=True, exist_ok=True)
 
     if hpo_file.exists():
         print("[INFO] Detected all_candidates.json → generating HPO plots")
 
-        with open(hpo_file, "r") as f:
-            candidates = json.load(f)
+        candidates = json.load(open(hpo_file))
 
-        maes = [c["mae"] for c in candidates]
-        lookbacks = [c["lookback"] for c in candidates]
-        lstm_units = [c["lstm_units"] for c in candidates]
-        lrs = [c["learning_rate"] for c in candidates]
+        maes = [c.get("mae_usd") for c in candidates]
+        lookbacks = [c["config"]["lookback"] for c in candidates]
+        lstm_units = [c["config"]["lstm_units"] for c in candidates]
+        lrs = [c["config"]["learning_rate"] for c in candidates]
 
-        # 1) BARPLOT — MAE per config
+        # 1) BARPLOT
         fig = plt.figure(figsize=(10, 5))
         plt.bar(range(len(maes)), maes)
         plt.title("MAE per Hyperparameter Configuration")
-        plt.xlabel("Configuration Index")
-        plt.ylabel("MAE")
+        plt.xlabel("Config Index")
+        plt.ylabel("MAE USD")
         plt.grid(True)
-        fig.savefig(hpo_plots_folder / "barplot_mae.png")
+        fig.savefig(hpo_plots / "barplot_mae.png")
 
-        # 2) HEATMAP (lookback × lstm_units)
-        unique_lb = sorted(list(set(lookbacks)))
-        unique_lu = sorted(list(set(lstm_units)))
+        # 2) HEATMAP
+        unique_lb = sorted(set(lookbacks))
+        unique_lu = sorted(set(lstm_units))
         heat = np.zeros((len(unique_lb), len(unique_lu)))
 
         for i, lb in enumerate(unique_lb):
@@ -292,25 +269,23 @@ def main():
 
         fig = plt.figure(figsize=(8, 6))
         plt.imshow(heat, cmap="viridis")
-        plt.colorbar(label="Average MAE")
+        plt.colorbar(label="MAE USD")
         plt.xticks(range(len(unique_lu)), unique_lu)
         plt.yticks(range(len(unique_lb)), unique_lb)
         plt.xlabel("LSTM units")
         plt.ylabel("Lookback")
-        plt.title("HPO Heatmap (MAE)")
+        plt.title("HPO Heatmap (MAE USD)")
         plt.tight_layout()
-        fig.savefig(hpo_plots_folder / "heatmap_mae.png")
+        fig.savefig(hpo_plots / "heatmap_mae.png")
 
-        # 3) SCATTER — LR vs MAE
+        # 3) SCATTER LR vs MAE
         fig = plt.figure(figsize=(8, 5))
         plt.scatter(lrs, maes)
         plt.xlabel("Learning Rate")
-        plt.ylabel("MAE")
+        plt.ylabel("MAE USD")
         plt.title("Learning Rate vs MAE")
         plt.grid(True)
-        fig.savefig(hpo_plots_folder / "scatter_lr_mae.png")
-
-        print("[INFO] HPO plots saved in:", hpo_plots_folder)
+        fig.savefig(hpo_plots / "scatter_lr_mae.png")
 
     print("Evaluation finished. Saved at:", evaluation_folder.absolute())
 
