@@ -115,6 +115,8 @@ jobs:
         df.to_csv("data/raw.csv", index=False)
         EOF
 
+        cp data/raw.csv data/prepared/raw.csv
+
         python3 src/prepare.py data/raw.csv data/prepared --model_dir "local_model_${RUN_ID}"
 
     # 12) Evaluate model BEFORE visualization

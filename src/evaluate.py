@@ -8,8 +8,6 @@ import zipfile
 import tempfile
 import os
 import pandas as pd
-import joblib
-
 
 SAMPLE_SIZE = 5000  # Nombre max de points pour les graphiques
 
@@ -26,8 +24,8 @@ def create_sequences(df, lookback):
     return np.array(X), np.array(y)
 
 
-# PLots déjà existants
-def get_training_plot(model_history: dict) -> plt.Figure:
+# === PLOTS ===
+def get_training_plot(model_history: dict):
     epochs = range(1, len(model_history["val_loss"]) + 1)
     fig, ax1 = plt.subplots(figsize=(10, 4))
     ax1.plot(epochs, model_history["val_loss"], label="Validation loss")
@@ -38,10 +36,9 @@ def get_training_plot(model_history: dict) -> plt.Figure:
     return fig
 
 
-def plot_training_narrative(model_history: dict) -> plt.Figure:
+def plot_training_narrative(model_history: dict):
     val_loss = model_history["val_loss"]
     epochs = range(1, len(val_loss) + 1)
-
     best_epoch = int(np.argmin(val_loss)) + 1
     best_val = float(np.min(val_loss))
 
@@ -131,23 +128,20 @@ def main():
     lookback = cfg["lookback"]
     print(f"[INFO] Model lookback detected = {lookback}")
 
-    # 2) Load RAW CSV restored & synced from prepare.py
-    csv_raw = prepared_folder / "raw.csv"
-    if not csv_raw.exists():
-        raise FileNotFoundError("raw.csv not found — evaluate.py requires raw.csv from prepare.py")
+    # 2) Load RAW dataset (always raw.csv)
+    raw_path = prepared_folder / "raw.csv"
+    if not raw_path.exists():
+        raw_path = prepared_folder.parent / "raw.csv"
 
-    df = pd.read_csv(csv_raw)
+    if not raw_path.exists():
+        raise FileNotFoundError("raw.csv not found — prepare.py must produce raw.csv")
 
-    # 3) Load scaler → nécessaire pour cohérence totale
-    scaler_file = list(model_folder.glob("scaler.pkl"))
-    if not scaler_file:
-        raise FileNotFoundError("Missing scaler.pkl inside model folder.")
-    scaler = joblib.load(scaler_file[0])
+    df = pd.read_csv(raw_path)
 
-    # 4) build test sequences from normalized data
+    # 3) Build sequences
     X_test, y_test = create_sequences(df, lookback)
 
-    # 5) Load SavedModel ZIP
+    # 4) Load SavedModel Vertex (TFSMLayer)
     saved_zip = next(model_folder.glob("saved_model_*.zip"))
     tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
 
@@ -156,22 +150,20 @@ def main():
 
     model = tf.keras.layers.TFSMLayer(tmpdir, call_endpoint="serving_default")
 
-    # 6) Predictions
+    # 5) Predictions
     y_true, y_pred = collect_predictions(model, X_test, y_test)
 
-    # 7) Metrics (normalized)
+    # 6) Metrics
     mae = float(np.mean(np.abs(y_true - y_pred)))
     mse = float(np.mean((y_true - y_pred) ** 2))
 
     with open(evaluation_folder / "metrics.json", "w") as f:
         json.dump({"mae": mae, "mse": mse}, f, indent=2)
 
-    # 8) Training history
+    # 7) Training plots
     raw_history = np.load(model_folder / "history.npy", allow_pickle=True)
-    history_list = [h["val_loss"] for h in raw_history]
-    model_history = {"val_loss": history_list}
+    model_history = {"val_loss": [h["val_loss"] for h in raw_history]}
 
-    # 9) Save plots
     get_training_plot(model_history).savefig(plots_folder / "training_history.png")
     plot_training_narrative(model_history).savefig(plots_folder / "training_narrative.png")
     get_pred_vs_true_plot(y_true, y_pred).savefig(plots_folder / "pred_vs_true.png")
