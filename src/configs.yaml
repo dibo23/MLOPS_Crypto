@@ -1,10 +1,10 @@
 # Hyperparamètres à tester
-batch_sizes: [32, 64]
-lookbacks: [30, 60]
-lstm_units: [32, 64]
+batch_sizes: [32, 64, 128]
+lookbacks: [20, 40, 80]
+lstm_units: [32, 64, 128]
 learning_rates: [0.001, 0.0005]
 
 # Paramètres d'entraînement
-max_epochs: 25
-early_stopping_patience: 4
+max_epochs: 15
+early_stopping_patience: 3
 reduce_lr_patience: 2

@@ -1,6 +1,8 @@
 name: Vertex MLOps Pipeline
  
 on:
+  push:
+    branches: ["main"]
   workflow_dispatch: {}
 
 jobs:
@@ -63,12 +65,12 @@ jobs:
         echo "$JOB_ID" > job_id.txt
         echo "Launched job: $JOB_ID"
 
-    # 9) Attendre Vertex (45 min)
+    # 9) Attendre Vertex (120 min)
     - name: Wait for Vertex AI Training Job
       run: |
-        echo "Waiting 45 minutes while Vertex trains..."
-        for i in {1..45}; do
-          echo "Minute $i/45..."
+        echo "Waiting 120 minutes while Vertex trains..."
+        for i in {1..120}; do
+          echo "Minute $i/120..."
           sleep 60
         done
         echo "Training should now be finished."
