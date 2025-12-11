@@ -9,7 +9,7 @@ import os
 import argparse
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
-from utils.seed import set_seed
+from src.utils.seed import set_seed
 
 def get_preview_plot(df: pd.DataFrame) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(10, 5))
