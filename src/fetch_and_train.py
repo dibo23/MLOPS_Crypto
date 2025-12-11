@@ -38,8 +38,8 @@ parser.add_argument("--pair", type=str, required=True)
 args = parser.parse_args()
 
 RUN_ID = args.run_id
-PAIR_RAW = args.pair                  # ex: BTC/USDT
-PAIR = args.pair.replace("/", "_")    # ex: BTC_USDT
+PAIR_RAW = args.pair
+PAIR = args.pair.replace("/", "_")
 
 
 def fetch_ohlcv(pair, since, timeframe):
@@ -57,7 +57,6 @@ def fetch_ohlcv(pair, since, timeframe):
         since = data[-1][0] + 1
         time.sleep(exchange.rateLimit / 1000)
 
-        # Sécurité
         if len(all_data) > 200000:
             break
 
@@ -69,22 +68,29 @@ def fetch_ohlcv(pair, since, timeframe):
 
 def normalize_split(df):
     """Normalise + split train/test."""
+
     cols = ["open", "high", "low", "close", "volume"]
-    scaler = MinMaxScaler()
 
-    df_norm = df.copy()
-    df_norm[cols] = scaler.fit_transform(df[cols])
-
-    # Split 90% train, 10% test (time series → no shuffle)
-    n = len(df_norm)
+    # --- split first (NO DATA LEAKAGE) ---
+    n = len(df)
     split_idx = int(n * 0.9)
 
-    df_train = df_norm.iloc[:split_idx].reset_index(drop=True)
-    df_test = df_norm.iloc[split_idx:].reset_index(drop=True)
+    df_train = df.iloc[:split_idx].reset_index(drop=True)
+    df_test = df.iloc[split_idx:].reset_index(drop=True)
 
-    print(f"Split: train={len(df_train)}, test={len(df_test)}")
+    scaler = MinMaxScaler()
 
-    return df_train, df_test, scaler
+    # fit uniquement sur TRAIN
+    df_train_norm = df_train.copy()
+    df_train_norm[cols] = scaler.fit_transform(df_train[cols])
+
+    # transform test avec scaler train
+    df_test_norm = df_test.copy()
+    df_test_norm[cols] = scaler.transform(df_test[cols])
+
+    print(f"Split: train={len(df_train_norm)}, test={len(df_test_norm)}")
+
+    return df_train_norm, df_test_norm, scaler
 
 
 def upload_parquet(df, path):
@@ -112,7 +118,7 @@ def main():
 
     upload_parquet(df_raw, f"{OUTPUT_PATH}/{PAIR}_raw_{RUN_ID}.parquet")
 
-    # 2) Normalisation + split
+    # 2) Normalisation + split SANS DATA LEAKAGE
     df_train, df_test, scaler = normalize_split(df_raw)
 
     upload_parquet(df_train, f"{OUTPUT_PATH}/{PAIR}_train_{RUN_ID}.parquet")

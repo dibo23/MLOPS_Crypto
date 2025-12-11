@@ -32,7 +32,6 @@ def load_savedmodel_zip(tmp_file):
     with zipfile.ZipFile(tmp_file, "r") as z:
         z.extractall(extract_dir)
 
-    # Load SavedModel using TFSMLayer (Keras 3 compatible)
     return tf.keras.layers.TFSMLayer(extract_dir, call_endpoint="serving_default")
 
 # Gestion robuste des formats modèle exportés par Vertex AI
@@ -43,22 +42,18 @@ def load_model_from_gcs_safely(bucket_name, blob_name):
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
-    # Fichier temporaire local
     tmp_dir = tempfile.mkdtemp(prefix="model_" + str(uuid.uuid4())[:8] + "_")
     tmp_file = os.path.join(tmp_dir, os.path.basename(blob_name))
     blob.download_to_filename(tmp_file)
 
-    # 1) ZIP → SavedModel compressé
     if blob_name.endswith(".zip"):
         print("→ Loading SavedModel ZIP via TFSMLayer")
         return load_savedmodel_zip(tmp_file)
 
-    # 2) Vertex .keras = SavedModel compressé
     if blob_name.endswith(".keras"):
         print("→ Loading .keras (Vertex) as SavedModel ZIP")
         return load_savedmodel_zip(tmp_file)
 
-    # 3) Format H5 classique
     if blob_name.endswith(".h5"):
         print("→ Loading native H5 Keras model")
         return tf.keras.models.load_model(tmp_file)
@@ -81,12 +76,10 @@ def get_model_folder(bucket_name, base_path, run_id=None):
 
     folders = sorted(folders)
 
-    # Dernier modèle si run_id non spécifié
     if run_id is None:
         print("Latest model folder:", folders[-1].rstrip("/"))
         return folders[-1].rstrip("/")
 
-    # Sélection par RUN_ID
     for f in folders:
         if run_id in f:
             print("Selected model folder:", f.rstrip("/"))
@@ -132,7 +125,6 @@ def load_artifacts_gcs(bucket_name, base_path, run_id=None):
     scaler = joblib.load(io.BytesIO(load_from_gcs(bucket_name, scaler_blob)))
     df = pd.read_parquet(io.BytesIO(load_from_gcs(bucket_name, parquet_blob)))
 
-    # Chargement automatique du lookback et n_features
     config_bytes = load_from_gcs(bucket_name, config_blob)
     config = json.loads(config_bytes.decode("utf-8"))
 
@@ -165,22 +157,25 @@ def main():
     print("Loading RAW data for this RUN_ID...")
 
     raw_blob = f"{args.gcs_path}/BTC_USDT_raw_{args.run_id}.parquet"
-
     raw_bytes = load_from_gcs(args.bucket, raw_blob)
     raw_df = pd.read_parquet(io.BytesIO(raw_bytes))
 
-    # Replace df from train_data.parquet with real raw data
     df = raw_df.copy()
 
-    # Ensure timestamp exists and sorted
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         df = df.sort_values("timestamp").reset_index(drop=True)
         df = df.set_index("timestamp")
 
+    cols = ["open", "high", "low", "close", "volume"]
+    raw_vals = df[cols].values
+    norm_vals = scaler.transform(raw_vals)
+
+    df_norm = df.copy()
+    df_norm[cols] = norm_vals
+
     print("RAW dataset loaded:", df.shape)
 
-    # Lookback / features détectés automatiquement via model_config.json
     lookback = config["lookback"]
     n_features = config["n_features"]
     print(f"Loaded model config: lookback={lookback}, n_features={n_features}")
@@ -189,12 +184,10 @@ def main():
     out_dir = os.path.join("evaluation", "plots_gcs", run_id)
     ensure_dir(out_dir)
 
-    # Construction des séquences
-    X, y = create_sequences(df, lookback)
+    # Construction des séquences (normalisées)
+    X, y = create_sequences(df_norm, lookback)
 
-    # Appel au modèle TFSMLayer → peut renvoyer un dict {"output_0": tensor}
     raw = model(X)
-
     if isinstance(raw, dict):
         raw = raw["output_0"]
 
@@ -205,18 +198,18 @@ def main():
     mse = float(np.mean((preds - y) ** 2))
     rmse = float(np.sqrt(mse))
 
-    # Dénormalisation
-    features_full = df[["open", "high", "low", "close", "volume"]].values
-    real_full = features_full[lookback:]
-    pred_full = real_full.copy()
-    pred_full[:, 3] = preds
+    # Dénormalisation (CORRIGÉ)
+    features_full_norm = norm_vals
+    real_full_norm = features_full_norm[lookback:]
+    pred_full_norm = real_full_norm.copy()
+    pred_full_norm[:, 3] = preds
 
-    real_prices = scaler.inverse_transform(real_full)[:, 3]
-    pred_prices = scaler.inverse_transform(pred_full)[:, 3]
+    real_prices = scaler.inverse_transform(real_full_norm)[:, 3]
+    pred_prices = scaler.inverse_transform(pred_full_norm)[:, 3]
     dates = df.index[lookback:]
 
-    # Prédiction t+1
-    last_seq = features_full[-lookback:].reshape(1, lookback, n_features)
+    # Prédiction t+1 (CORRIGÉ)
+    last_seq = features_full_norm[-lookback:].reshape(1, lookback, n_features)
 
     raw_future = model(last_seq)
     if isinstance(raw_future, dict):
@@ -224,24 +217,19 @@ def main():
 
     future_pred_norm = float(raw_future.numpy()[0][0])
 
-    future_point = real_full[-1:].copy()
+    future_point = real_full_norm[-1:].copy()
     future_point[:, 3] = future_pred_norm
     future_usd = float(scaler.inverse_transform(future_point)[0, 3])
 
     delta_t = dates[-1] - dates[-2]
     future_time = dates[-1] + delta_t
 
-    # MAE / RMSE en USD (pas en normalisé)
     mae_usd = float(np.mean(np.abs(pred_prices - real_prices)))
     rmse_usd = float(np.sqrt(np.mean((pred_prices - real_prices) ** 2)))
 
-    # Eviter division par zéro pour MAPE
     valid = real_prices != 0
-
-    # MAPE corrigé (sans valeurs real = 0)
     mape = float(np.mean(np.abs((real_prices[valid] - pred_prices[valid]) / real_prices[valid])) * 100)
 
-    # Sauvegarde métriques APRÈS calcul du MAPE correct
     with open(os.path.join(out_dir, "metrics.json"), "w") as f:
         json.dump({
             "mae_usd": mae_usd,
@@ -252,7 +240,6 @@ def main():
             "rmse_normalized": rmse
         }, f, indent=4)
 
-    # Texte métrique mis à jour (USD + lisible)
     metric_text = (
         f"MAE (USD): {mae_usd:.4f}\n"
         f"RMSE (USD): {rmse_usd:.4f}\n"
@@ -262,15 +249,11 @@ def main():
         f"T+1 pred: {future_usd:.2f} USD"
     )
 
-    # COURBE PRINCIPALE
     plt.figure(figsize=(16, 6))
     plt.plot(dates, real_prices, label="Real Price (USD)")
     plt.plot(dates, pred_prices, label="Prediction (USD)")
-
-    # Point t+1
     plt.scatter(future_time, future_usd, s=60, color="red", label="T+1 prediction")
 
-    # Encadré avec métriques
     plt.gca().text(
         0.02, 0.98, metric_text,
         transform=plt.gca().transAxes,
@@ -285,13 +268,10 @@ def main():
     plt.savefig(os.path.join(out_dir, "preds_usd.png"))
     plt.close()
 
-    # ZOOM 200
     zoom = 200
     plt.figure(figsize=(16, 6))
     plt.plot(dates[-zoom:], real_prices[-zoom:], label="Real Price (USD)")
     plt.plot(dates[-zoom:], pred_prices[-zoom:], label="Prediction (USD)")
-
-    # t+1 encore visible
     plt.scatter(future_time, future_usd, s=60, color="red", label="T+1 prediction")
 
     plt.gca().text(
@@ -308,7 +288,6 @@ def main():
     plt.savefig(os.path.join(out_dir, "preds_usd_zoom_200.png"))
     plt.close()
 
-    # Sauvegarde texte future prediction
     with open(os.path.join(out_dir, "future_prediction.txt"), "w") as f:
         f.write(f"{future_time}, {future_usd}")
 
@@ -317,4 +296,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

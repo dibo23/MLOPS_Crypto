@@ -12,6 +12,7 @@ from google.cloud import storage
 import joblib
 import yaml
 
+
 # ---------------------------------------------
 # Chargement Configs
 # ---------------------------------------------
@@ -36,6 +37,7 @@ BASE_PATH = "/".join(parts[1:]) if len(parts) > 1 else ""
 
 storage_client = storage.Client()
 
+
 # ---------------------------------------------
 # GCS Loaders
 # ---------------------------------------------
@@ -52,6 +54,7 @@ def load_parquet_from_gcs(bucket_name, blob_path):
     buf.seek(0)
     return pd.read_parquet(buf)
 
+
 def load_scaler_from_gcs(bucket_name, blob_path):
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
@@ -64,6 +67,7 @@ def load_scaler_from_gcs(bucket_name, blob_path):
     buf.seek(0)
     return joblib.load(buf)
 
+
 # ---------------------------------------------
 # Séquences
 # ---------------------------------------------
@@ -75,9 +79,10 @@ def create_sequences(df, lookback):
     X, y = [], []
     for i in range(lookback, len(data)):
         X.append(data[i - lookback:i])
-        y.append(data[i, 3])  # close normalisé
+        y.append(data[i, 3])
 
     return np.array(X), np.array(y)
+
 
 # ---------------------------------------------
 # Modèle LSTM (anti collapse)
@@ -90,6 +95,7 @@ def build_lstm(cfg, n_features):
         tf.keras.layers.LSTM(cfg["lstm_units"] // 2, dropout=0.2),
         tf.keras.layers.Dense(1)
     ])
+
 
 # ---------------------------------------------
 # Entraînement d'une config
@@ -105,7 +111,6 @@ def train_one_config(df, cfg, max_epochs):
     optimizer = tf.keras.optimizers.Adam(learning_rate=cfg["learning_rate"])
     model.compile(optimizer=optimizer, loss="mse")
 
-    # split 10%
     ds_size = len(X)
     val_size = int(ds_size * 0.1)
 
@@ -128,6 +133,7 @@ def train_one_config(df, cfg, max_epochs):
 
     return model, history, (X_val, y_val)
 
+
 # ---------------------------------------------
 # MAE USD pour sélection modèle
 # ---------------------------------------------
@@ -135,6 +141,7 @@ def train_one_config(df, cfg, max_epochs):
 def compute_mae_usd(model, X_val, y_val, scaler):
     raw_pred = model.predict(X_val, verbose=0).reshape(-1)
 
+    # MATRICES CORRECTES POUR INVERSE TRANSFORM
     pred_f = np.zeros((len(raw_pred), 5))
     true_f = np.zeros((len(y_val), 5))
 
@@ -145,6 +152,7 @@ def compute_mae_usd(model, X_val, y_val, scaler):
     real_usd = scaler.inverse_transform(true_f)[:, 3]
 
     return float(np.mean(np.abs(pred_usd - real_usd)))
+
 
 # ---------------------------------------------
 # HPO complet
@@ -168,6 +176,7 @@ def evaluate_all_configs(df, configs, max_epochs, scaler):
     candidates.sort(key=lambda c: c["mae_usd"])
     return candidates
 
+
 # ---------------------------------------------
 # Load dataset + scaler
 # ---------------------------------------------
@@ -181,8 +190,9 @@ df = load_parquet_from_gcs(BUCKET, train_path)
 print(f"Loading scaler: gs://{BUCKET}/{scaler_path}")
 scaler = load_scaler_from_gcs(BUCKET, scaler_path)
 
-cols = ["open", "high", "low", "close", "volume"]
-df[cols] = scaler.transform(df[cols])
+# ⚠️ PLUS DE NORMALISATION ICI → fetch_and_train L'A DÉJÀ FAIT
+# df[cols] = scaler.transform(df[cols])  ❌ supprimé
+
 
 # ---------------------------------------------
 # Load configs.yaml
@@ -208,6 +218,7 @@ configs_to_test = [
 
 max_epochs = config_yaml["max_epochs"]
 
+
 # ---------------------------------------------
 # Run HPO
 # ---------------------------------------------
@@ -218,6 +229,7 @@ model = best["model"]
 history = best["history"]
 best_config = best["config"]
 
+
 # ---------------------------------------------
 # Export (identique à ton code → Vertex AI OK)
 # ---------------------------------------------
@@ -226,7 +238,7 @@ timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
 model_dir = f"{BASE_PATH}/models/{PAIR}_{RUN_ID}_{timestamp}"
 bucket = storage_client.bucket(BUCKET)
 
-# SavedModel wrap
+
 class Serve(tf.Module):
     def __init__(self, model):
         super().__init__()
@@ -238,8 +250,8 @@ class Serve(tf.Module):
     def serving_default(self, x):
         return {"output_0": self.model(x)}
 
-serving = Serve(model)
 
+serving = Serve(model)
 local_model_dir = f"saved_model_{PAIR}"
 tf.saved_model.save(serving, local_model_dir)
 

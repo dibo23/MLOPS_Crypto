@@ -8,6 +8,8 @@ import zipfile
 import tempfile
 import os
 import pandas as pd
+import joblib
+
 
 SAMPLE_SIZE = 5000  # Nombre max de points pour les graphiques
 
@@ -92,6 +94,7 @@ def get_correlation_plot(y_true, y_pred):
     plt.tight_layout()
     return fig
 
+
 # Collect predictions
 def collect_predictions(model, X, y):
     preds = model(X)
@@ -101,8 +104,8 @@ def collect_predictions(model, X, y):
     preds = preds.numpy().flatten()
     y = y.flatten()
 
-    # Limit to SAMPLE_SIZE
     return y[:SAMPLE_SIZE], preds[:SAMPLE_SIZE]
+
 
 # MAIN
 def main():
@@ -128,14 +131,23 @@ def main():
     lookback = cfg["lookback"]
     print(f"[INFO] Model lookback detected = {lookback}")
 
-    # 2) Load raw TFRecord → Convert back to Pandas
-    df = pd.read_csv(prepared_folder / "raw.csv") if (prepared_folder / "raw.csv").exists() \
-        else pd.read_csv(prepared_folder / "../raw.csv")
+    # 2) Load TEST dataset (normalized)
+    test_path = prepared_folder / "test.parquet"
+    if not test_path.exists():
+        raise FileNotFoundError("test.parquet not found — evaluate.py requires df_test normalisé.")
 
-    # 3) Rebuild TEST dataset with correct lookback
+    df = pd.read_parquet(test_path)
+
+    # 3) Load scaler → nécessaire pour cohérence totale
+    scaler_file = list(model_folder.glob("scaler.pkl"))
+    if not scaler_file:
+        raise FileNotFoundError("Missing scaler.pkl inside model folder.")
+    scaler = joblib.load(scaler_file[0])
+
+    # 4) build test sequences from normalized data
     X_test, y_test = create_sequences(df, lookback)
 
-    # 4) Load SavedModel Vertex (TFSMLayer)
+    # 5) Load SavedModel ZIP
     saved_zip = next(model_folder.glob("saved_model_*.zip"))
     tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
 
@@ -144,20 +156,22 @@ def main():
 
     model = tf.keras.layers.TFSMLayer(tmpdir, call_endpoint="serving_default")
 
-    # 5) Predictions
+    # 6) Predictions
     y_true, y_pred = collect_predictions(model, X_test, y_test)
 
-    # 6) Metrics
+    # 7) Metrics (normalized)
     mae = float(np.mean(np.abs(y_true - y_pred)))
     mse = float(np.mean((y_true - y_pred) ** 2))
 
     with open(evaluation_folder / "metrics.json", "w") as f:
         json.dump({"mae": mae, "mse": mse}, f, indent=2)
 
-    # 7) Plots
+    # 8) Training history
     raw_history = np.load(model_folder / "history.npy", allow_pickle=True)
-    model_history = {"val_loss": [h["val_loss"] for h in raw_history]}
+    history_list = [h["val_loss"] for h in raw_history]
+    model_history = {"val_loss": history_list}
 
+    # 9) Save plots
     get_training_plot(model_history).savefig(plots_folder / "training_history.png")
     plot_training_narrative(model_history).savefig(plots_folder / "training_narrative.png")
     get_pred_vs_true_plot(y_true, y_pred).savefig(plots_folder / "pred_vs_true.png")
