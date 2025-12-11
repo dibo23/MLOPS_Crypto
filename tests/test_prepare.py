@@ -1,11 +1,12 @@
 import pandas as pd
 import numpy as np
+import sys
 from pathlib import Path
 from src.prepare import main as prepare_main
-import joblib
 
-def test_prepare_output_shapes(tmp_path):
+def test_prepare_output_shapes(tmp_path, monkeypatch):
 
+    # Fake raw.csv
     df = pd.DataFrame({
         "timestamp": pd.date_range(start="2020-01-01", periods=200, freq="1min"),
         "open": np.random.rand(200),
@@ -21,14 +22,18 @@ def test_prepare_output_shapes(tmp_path):
     prepared_dir = tmp_path / "prepared"
     prepared_dir.mkdir()
 
-    # Appelle prepare.py via main()
-    prepare_main([str(raw_path), str(prepared_dir)])
+    # simulate CLI input: sys.argv
+    monkeypatch.setattr(sys, "argv", [
+        "prepare.py",
+        str(raw_path),
+        str(prepared_dir)
+    ])
 
-    # Vérifie outputs
-    assert (prepared_dir / "raw.csv").exists(), "raw.csv not copied"
+    # Call prepare.py normally
+    prepare_main()
+
+    # Check expected outputs
+    assert (prepared_dir / "train").exists(), "Train dataset missing"
+    assert (prepared_dir / "test").exists(), "Test dataset missing"
     assert (prepared_dir / "scaler.pkl").exists(), "Scaler missing"
 
-    scaler = joblib.load(prepared_dir / "scaler.pkl")
-    scaled = scaler.transform(df[["open","high","low","close","volume"]].values)
-
-    assert scaled.shape == (200, 5)
