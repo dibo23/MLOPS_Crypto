@@ -8,11 +8,14 @@ import zipfile
 import tempfile
 import os
 import pandas as pd
+import joblib
 
 SAMPLE_SIZE = 5000  # Nombre max de points pour les graphiques
 
 
+# ============================================================
 # Dataset reconstruction LSTM
+# ============================================================
 def create_sequences(df, lookback):
     cols = ["open", "high", "low", "close", "volume"]
     data = df[cols].values
@@ -20,11 +23,13 @@ def create_sequences(df, lookback):
     X, y = [], []
     for i in range(lookback, len(data)):
         X.append(data[i - lookback:i])
-        y.append(data[i, 3])
+        y.append(data[i, 3])  # close normalisé
     return np.array(X), np.array(y)
 
 
-# === PLOTS ===
+# ============================================================
+# PLOTS
+# ============================================================
 def get_training_plot(model_history: dict):
     epochs = range(1, len(model_history["val_loss"]) + 1)
     fig, ax1 = plt.subplots(figsize=(10, 4))
@@ -39,6 +44,7 @@ def get_training_plot(model_history: dict):
 def plot_training_narrative(model_history: dict):
     val_loss = model_history["val_loss"]
     epochs = range(1, len(val_loss) + 1)
+
     best_epoch = int(np.argmin(val_loss)) + 1
     best_val = float(np.min(val_loss))
 
@@ -54,8 +60,8 @@ def plot_training_narrative(model_history: dict):
 
 def get_pred_vs_true_plot(y_true, y_pred):
     fig = plt.figure(figsize=(12, 5))
-    plt.plot(y_true, label="True Close", linewidth=1)
-    plt.plot(y_pred, label="Predicted Close", linewidth=1)
+    plt.plot(y_true, label="True Close (USD)", linewidth=1)
+    plt.plot(y_pred, label="Predicted Close (USD)", linewidth=1)
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -66,7 +72,7 @@ def get_error_over_time_plot(y_true, y_pred):
     abs_error = np.abs(y_true - y_pred)
     fig = plt.figure(figsize=(10, 4))
     plt.plot(abs_error, linewidth=1)
-    plt.title("Absolute Error Over Time")
+    plt.title("Absolute Error Over Time (USD)")
     plt.grid(True)
     plt.tight_layout()
     return fig
@@ -83,17 +89,21 @@ def get_error_distribution_plot(y_true, y_pred):
 
 def get_correlation_plot(y_true, y_pred):
     fig = plt.figure(figsize=(6, 6))
-    plt.scatter(y_true, y_pred, s=5, alpha=0.5)
+    plt.scatter(y_true, y_pred, s=5, alpha=0.4)
     min_val = min(y_true.min(), y_pred.min())
     max_val = max(y_true.max(), y_pred.max())
-    plt.plot([min_val, max_val], [min_val, max_val], linestyle="--")
+    plt.plot([min_val, max_val], [min_val, max_val], linestyle="--", color="red")
+    plt.xlabel("True Price (USD)")
+    plt.ylabel("Predicted Price (USD)")
     plt.grid(True)
     plt.tight_layout()
     return fig
 
 
-# Collect predictions
-def collect_predictions(model, X, y):
+# ============================================================
+# Collect predictions (convert to USD)
+# ============================================================
+def collect_predictions(model, X, y, scaler):
     preds = model(X)
     if isinstance(preds, dict):
         preds = preds["output_0"]
@@ -101,10 +111,22 @@ def collect_predictions(model, X, y):
     preds = preds.numpy().flatten()
     y = y.flatten()
 
-    return y[:SAMPLE_SIZE], preds[:SAMPLE_SIZE]
+    # Format 5 features for inverse_transform
+    pred_full = np.zeros((len(preds), 5))
+    true_full = np.zeros((len(y), 5))
+
+    pred_full[:, 3] = preds
+    true_full[:, 3] = y
+
+    y_pred_usd = scaler.inverse_transform(pred_full)[:, 3]
+    y_true_usd = scaler.inverse_transform(true_full)[:, 3]
+
+    return y_true_usd[:SAMPLE_SIZE], y_pred_usd[:SAMPLE_SIZE]
 
 
+# ============================================================
 # MAIN
+# ============================================================
 def main():
     if len(sys.argv) != 3:
         print("Usage: python3 evaluate.py <model-folder> <prepared-dataset-folder>")
@@ -117,7 +139,9 @@ def main():
     plots_folder = evaluation_folder / "plots"
     plots_folder.mkdir(parents=True, exist_ok=True)
 
-    # 1) Load model_config.json → GET LOOKBACK
+    # -----------------------------------------
+    # 1) Load model_config.json (lookback)
+    # -----------------------------------------
     config_file = model_folder / "model_config.json"
     if not config_file.exists():
         raise FileNotFoundError("model_config.json not found — cannot determine lookback.")
@@ -128,7 +152,9 @@ def main():
     lookback = cfg["lookback"]
     print(f"[INFO] Model lookback detected = {lookback}")
 
-    # 2) Load RAW dataset (always raw.csv)
+    # -----------------------------------------
+    # 2) Load RAW dataset
+    # -----------------------------------------
     raw_path = prepared_folder / "raw.csv"
     if not raw_path.exists():
         raw_path = prepared_folder.parent / "raw.csv"
@@ -138,10 +164,14 @@ def main():
 
     df = pd.read_csv(raw_path)
 
+    # -----------------------------------------
     # 3) Build sequences
+    # -----------------------------------------
     X_test, y_test = create_sequences(df, lookback)
 
-    # 4) Load SavedModel Vertex (TFSMLayer)
+    # -----------------------------------------
+    # 4) Load SavedModel (TFSMLayer)
+    # -----------------------------------------
     saved_zip = next(model_folder.glob("saved_model_*.zip"))
     tmpdir = tempfile.mkdtemp(prefix="savedmodel_")
 
@@ -150,17 +180,32 @@ def main():
 
     model = tf.keras.layers.TFSMLayer(tmpdir, call_endpoint="serving_default")
 
-    # 5) Predictions
-    y_true, y_pred = collect_predictions(model, X_test, y_test)
+    # -----------------------------------------
+    # 5) Load scaler.pkl
+    # -----------------------------------------
+    scaler_path = model_folder / "scaler.pkl"
+    if not scaler_path.exists():
+        raise FileNotFoundError("scaler.pkl missing in model folder — needed for USD evaluation.")
 
-    # 6) Metrics
+    scaler = joblib.load(scaler_path)
+
+    # -----------------------------------------
+    # 6) Predictions (in USD)
+    # -----------------------------------------
+    y_true, y_pred = collect_predictions(model, X_test, y_test, scaler)
+
+    # -----------------------------------------
+    # 7) Metrics (USD)
+    # -----------------------------------------
     mae = float(np.mean(np.abs(y_true - y_pred)))
     mse = float(np.mean((y_true - y_pred) ** 2))
 
     with open(evaluation_folder / "metrics.json", "w") as f:
-        json.dump({"mae": mae, "mse": mse}, f, indent=2)
+        json.dump({"mae_usd": mae, "mse_usd": mse}, f, indent=2)
 
-    # 7) Training plots
+    # -----------------------------------------
+    # 8) Training plots
+    # -----------------------------------------
     raw_history = np.load(model_folder / "history.npy", allow_pickle=True)
     model_history = {"val_loss": [h["val_loss"] for h in raw_history]}
 
