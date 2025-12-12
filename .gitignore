@@ -1,8 +1,10 @@
 ## Python
 .venv/
+.env_github
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+.cache
 
 ## DVC
 /model
