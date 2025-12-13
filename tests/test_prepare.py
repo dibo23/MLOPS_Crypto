@@ -1,9 +1,12 @@
 import pandas as pd
 import numpy as np
-from src.prepare import run
+import sys
+from pathlib import Path
+from src.prepare import main
 
-def test_prepare_output_shapes(tmp_path):
+def test_prepare_output_shapes(tmp_path, monkeypatch):
 
+    # Fake raw.csv
     df = pd.DataFrame({
         "timestamp": pd.date_range(start="2020-01-01", periods=200, freq="1min"),
         "open": np.random.rand(200),
@@ -18,8 +21,21 @@ def test_prepare_output_shapes(tmp_path):
 
     prepared_dir = tmp_path / "prepared"
 
-    run(str(raw_path), str(prepared_dir))
+    # Simuler appel CLI: python -m src.prepare raw.csv prepared/
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare",
+            str(raw_path),
+            str(prepared_dir),
+        ],
+    )
+
+    main()
 
     assert (prepared_dir / "train").exists(), "Train dataset missing"
     assert (prepared_dir / "test").exists(), "Test dataset missing"
     assert (prepared_dir / "scaler.pkl").exists(), "Scaler missing"
+    assert (prepared_dir / "metadata.json").exists(), "Metadata missing"
+    assert (prepared_dir / "preview.png").exists(), "Preview plot missing"
